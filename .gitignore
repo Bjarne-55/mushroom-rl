@@ -17,3 +17,6 @@ logs/
 *.c
 *.so
 examples/cfg
+_notes/
+plots/
+.vscode/

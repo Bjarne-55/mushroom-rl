@@ -1,4 +1,6 @@
 import hydra
+import os
+import time
 from omegaconf import DictConfig
 from omniisaacgymenvs.utils.hydra_cfg.reformat import omegaconf_to_dict
 from omniisaacgymenvs.utils.hydra_cfg.hydra_utils import *
@@ -17,6 +19,8 @@ from mushroom_rl.algorithms.actor_critic import TRPO, PPO
 from mushroom_rl.policy import GaussianTorchPolicy
 from mushroom_rl.environments import IsaacEnv
 from mushroom_rl.utils import TorchUtils
+from mushroom_rl.utils.plot import plot_mean_conf
+import matplotlib.pyplot as plt
 
 
 class Network(nn.Module):
@@ -45,15 +49,12 @@ class Network(nn.Module):
         return a
 
 
-def experiment(cfg_dict, headless, alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
+def experiment(mdp, alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
                alg_params, policy_params):
 
     logger = Logger(alg.__name__, results_dir=None)
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
-
-    mdp = IsaacEnv(cfg_dict, headless=headless)
-
 
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
@@ -79,25 +80,41 @@ def experiment(cfg_dict, headless, alg, n_epochs, n_steps, n_steps_per_fit, n_ep
 
     dataset = core.evaluate(n_episodes=n_episodes_test, render=False)
 
-    J = torch.mean(dataset.discounted_return)
-    R = torch.mean(dataset.undiscounted_return)
-    E = agent.policy.entropy()
+    Js = []
+    Rs = []
+    Es = []
+    Vs = []
 
-    logger.epoch_info(0, J=J, R=R, entropy=E)
+    J = torch.mean(dataset.discounted_return).to("cpu")
+    R = torch.mean(dataset.undiscounted_return).to("cpu")
+    E = agent.policy.entropy().to("cpu")
+    V = torch.mean(agent._V(dataset.get_init_states())).detach().to("cpu")
+    Js.append(J)
+    Rs.append(R)
+    Es.append(E)
+    Vs.append(V)
 
+    logger.epoch_info(0, J=J, R=R, entropy=E, V=V)
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
         dataset = core.evaluate(n_episodes=n_episodes_test, render=False)
 
-        J = torch.mean(dataset.discounted_return)
-        R = torch.mean(dataset.undiscounted_return)
-        E = agent.policy.entropy()
+        J = torch.mean(dataset.discounted_return).to("cpu")
+        R = torch.mean(dataset.undiscounted_return).to("cpu")
+        E = agent.policy.entropy().to("cpu")
+        V = torch.mean(agent._V(dataset.get_init_states())).detach().to("cpu")
+        Js.append(J)
+        Rs.append(R)
+        Es.append(E)
+        Vs.append(V)
 
-        logger.epoch_info(it+1, J=J, R=R, entropy=E)
+        logger.epoch_info(it+1, J=J, R=R, entropy=E, V=V)
 
-    logger.info('Press a button to visualize')
-    input()
-    core.evaluate(n_episodes=5, render=False)
+    #logger.info('Press a button to visualize')
+    #input()
+    #core.evaluate(n_episodes=5, render=False)
+
+    return Js, Rs, Es, Vs
 
 
 @hydra.main(config_name="config", config_path="./cfg")
@@ -130,13 +147,46 @@ def parse_hydra_configs(cfg: DictConfig):
                        cg_damping=1e-2,
                        cg_residual_tol=1e-10)
 
-    algs_params = [
-        (PPO, 'ppo', ppo_params)
-    ]
+    run_Js = []
+    run_Rs = []
+    run_Es = []
+    run_Vs = []
+    seeds = []
 
-    for alg, alg_name, alg_params in algs_params:
-        experiment(cfg_dict=cfg_dict, headless=headless, alg=alg, n_epochs=40, n_steps=30000, n_steps_per_fit=3000,
-                   n_episodes_test=512, alg_params=alg_params, policy_params=policy_params)
+    mdp = IsaacEnv(cfg_dict, headless=headless)
+    
+    num_runs = 5
+    for i in range(num_runs):
+        seed = np.random.randint(0, 10000)
+        seeds.append(seed)
+        print(f"Start run {i} with seed {seed}")
+        mdp.seed(seed)
+
+        Js, Rs, Es, Vs = experiment(mdp=mdp, alg=PPO, n_epochs=20, n_steps=30000, n_steps_per_fit=3000,
+                   n_episodes_test=512, alg_params=ppo_params, policy_params=policy_params)
+        
+        mdp.stop()
+        
+        run_Js.append(Js)
+        run_Rs.append(Rs)
+        run_Es.append(Es)
+        run_Vs.append(Vs)
+        
+    
+    dir = "plots/ppo/" + str(time.time())
+    os.makedirs(dir)
+    create_plot(run_Js, dir, "J", f"PPO - discounted Return: {seeds}")
+    create_plot(run_Rs, dir, "R", f"PPO - undiscounted Return: {seeds}")
+    create_plot(run_Es, dir, "E", f"PPO - Entropy: {seeds}")
+    create_plot(run_Vs, dir, "V", f"PPO - value of intial states: {seeds}")
+    
+    
+
+def create_plot(data, directory, name, title):
+    fig, ax = plt.subplots()
+    plt.title(title)
+    plot_mean_conf(data, ax)
+    plt.savefig(f"{directory}/{name}.png")
 
 
 if __name__ == '__main__':
