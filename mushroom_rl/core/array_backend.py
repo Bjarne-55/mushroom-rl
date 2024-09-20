@@ -145,7 +145,23 @@ class ArrayBackend(object):
         raise NotImplementedError
 
     @staticmethod
-    def pack_padded_sequence(array, mask):
+    def pack_padded_sequence(array, mask=None):
+        raise NotImplementedError
+    
+    @staticmethod
+    def empty(shape, device=None):
+        raise NotImplementedError
+    
+    @staticmethod
+    def none():
+        raise NotImplementedError
+    
+    @staticmethod
+    def shape(array):
+        raise NotImplementedError
+    
+    @staticmethod
+    def full(shape, value):
         raise NotImplementedError
 
 
@@ -248,11 +264,30 @@ class NumpyBackend(ArrayBackend):
         return np.array(array)
 
     @staticmethod
-    def pack_padded_sequence(array, mask):
+    def pack_padded_sequence(array, mask=None):
         shape = array.shape
 
         new_shape = (shape[0] * shape[1],) + shape[2:]
-        return array.reshape(new_shape, order='F')[mask.flatten(order='F')]
+        if mask is None:
+            return array.reshape(new_shape, order='F')
+        else:
+            return array.reshape(new_shape, order='F')[mask.flatten(order='F')]
+    
+    @staticmethod
+    def empty(shape, device=None):
+        return np.empty(shape)
+    
+    @staticmethod
+    def none():
+        return np.nan
+    
+    @staticmethod
+    def shape(array):
+        return array.shape
+    
+    @staticmethod
+    def full(shape, value):
+        return np.full(shape, value)
 
 
 class TorchBackend(ArrayBackend):
@@ -360,13 +395,32 @@ class TorchBackend(ArrayBackend):
             return torch.tensor(array)
 
     @staticmethod
-    def pack_padded_sequence(array, mask):
+    def pack_padded_sequence(array, mask=None):
         shape = array.shape
 
         new_shape = (shape[0]*shape[1], ) + shape[2:]
 
-        return array.transpose(0, 1).reshape(new_shape)[mask.transpose(0, 1).flatten()]
+        if mask is None:
+            return array.transpose(0, 1).reshape(new_shape)
+        else:
+            return array.transpose(0, 1).reshape(new_shape)[mask.transpose(0, 1).flatten()]
 
+    @staticmethod
+    def empty(shape, device=None):
+        device = TorchUtils.get_device() if device is None else device
+        return torch.empty(shape, device=device)
+    
+    @staticmethod
+    def none():
+        return torch.nan
+    
+    @staticmethod
+    def shape(array):
+        return array.shape
+    
+    @staticmethod
+    def full(shape, value):
+        return torch.full(shape, value)
 
 class ListBackend(ArrayBackend):
 
@@ -419,5 +473,24 @@ class ListBackend(ArrayBackend):
         return array
 
     @staticmethod
-    def pack_padded_sequence(array, mask):
-        return NumpyBackend.pack_padded_sequence(array, np.array(mask))
+    def pack_padded_sequence(array, mask=None):
+        if mask is None:
+            return NumpyBackend.pack_padded_sequence(array)
+        else:
+            return NumpyBackend.pack_padded_sequence(array, np.array(mask))
+
+    @staticmethod
+    def empty(shape, device=None):
+        return np.empty(shape)
+    
+    @staticmethod
+    def none():
+        return None
+    
+    @staticmethod
+    def shape(array):
+        return np.array(array).shape
+    
+    @staticmethod
+    def full(shape, value):
+        return np.full(shape, value)
