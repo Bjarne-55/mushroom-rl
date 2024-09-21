@@ -1,4 +1,4 @@
-from mushroom_rl.environments.mujoco import MuJoCo, ObservationType
+from mushroom_rl.environments.mujoco_env import MuJoCo, ObservationType
 import numpy as np
 from pathlib import Path
 from copy import deepcopy
