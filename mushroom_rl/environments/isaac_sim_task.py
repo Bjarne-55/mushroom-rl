@@ -21,7 +21,7 @@ class IsaacSimTask(BaseTask):
     ZERO_ENV_PATH = TEMPLATE_ENV_PATH + "_0"
 
     def __init__(self, physic_context, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, 
-                 action_spec, backend):
+                 action_spec, additional_data_spec, backend):
         self.usd_path = usd_path
         self._physic_context = physic_context
         self._num_envs = num_envs
@@ -29,6 +29,7 @@ class IsaacSimTask(BaseTask):
         self._collisions_between_envs = collision_between_envs
         self._observation_spec = observation_spec
         self._action_spec = action_spec
+        self._additional_data_spec = additional_data_spec
         self._backend = backend
 
         super().__init__("CustomNameTask")#TODO
@@ -76,34 +77,26 @@ class IsaacSimTask(BaseTask):
         scene.add(self.robots)
         
         #register view
-        self._views = []
-        for name, path, obs_type in self._observation_spec:
-            if obs_type.is_body():
+        self._views = {}
+        if self._additional_data_spec is None:
+            specifications = self._observation_spec 
+        else:
+            specifications = self._observation_spec + self._additional_data_spec
+        
+        for name, path, obs_type in specifications:
+            if obs_type.is_body() and path not in self._views:
                 view = RigidPrimView(
                     prim_paths_expr=self.BASE_ENV_PATH + "/.*/Robot" + path,
                     name=path.replace("/", "_") + "_view",
                     reset_xform_properties=False
                 )
                 scene.add(view)
-                self._views.append(view)
-            else:
-                self._views.append(self.robots)
+                self._views[path] = view
     
     def get_observation(self, clone=True):
         obs = {}
         for name, view, obs_type, joint_index in self._observers:
-            if obs_type == ObservationType.BODY_POS:
-                obs[name] = view.get_world_poses(clone=clone)[0] - self._env_pos
-            elif obs_type == ObservationType.BODY_ROT:
-                obs[name] = view.get_world_poses(clone=clone)[1]
-            elif obs_type == ObservationType.BODY_LIN_VEL:
-                obs[name] = view.get_velocities(clone=clone)[:, :3]
-            elif obs_type == ObservationType.BODY_ANG_VEL:
-                obs[name] = view.get_velocities(clone=clone)[:, 3:]
-            elif obs_type == ObservationType.JOINT_POS:
-                obs[name] = view.get_joint_positions(joint_indices=joint_index, clone=clone)
-            elif obs_type == ObservationType.JOINT_VEL:
-                obs[name] = view.get_joint_velocities(joint_indices=joint_index, clone=clone)
+            obs[name] = self._read_property(view, obs_type, joint_indices=joint_index, clone=clone)
         return obs
     
     def apply_action(self, action, env_indices=None):
@@ -168,13 +161,69 @@ class IsaacSimTask(BaseTask):
             self._controlled_joints.append(joint_index)
 
         self._observers = []
-        for (name, path, obs_type), view in zip(self._observation_spec, self._views):
+        for name, path, obs_type in self._observation_spec:
             if obs_type.is_joint():
+                view = self.robots
                 joint_name = path.split('/')[-1]
                 joint_index = self.robots.get_dof_index(joint_name)
                 joint_index = ArrayBackend.get_array_backend(self._backend).from_list([joint_index])
             else:
+                view = self._views[path]
                 joint_index = None
 
             self._observers.append((name, view, obs_type, joint_index))
+
+        self._additionals = {}
+        for name, path, obs_type in self._additional_data_spec:
+            if obs_type.is_joint():
+                view = self.robots
+                joint_name = path.split('/')[-1]
+                joint_index = self.robots.get_dof_index(joint_name)
+                joint_index = ArrayBackend.get_array_backend(self._backend).from_list([joint_index])
+            else:
+                view = self._views[path]
+                joint_index = None
+            self._additionals[name] = (view, obs_type, joint_index)
+
+    def _set_property(self, view, obs_type, value, joint_indices=None, env_indices=None):
+        """
+        Will set values immediately
+        """
+        if obs_type == ObservationType.BODY_POS:
+            pos = value + self._env_pos[env_indices]
+            view.set_world_poses(positions=pos, indices=env_indices)
+        elif obs_type == ObservationType.BODY_ROT:
+            view.set_world_poses(orientations=value, indices=env_indices)
+        elif obs_type == ObservationType.BODY_LIN_VEL:
+            view.set_linear_velocities(value, indices=env_indices)
+        elif obs_type == ObservationType.BODY_ANG_VEL:
+            view.set_angular_velocities(value, indices=env_indices)
+        elif obs_type == ObservationType.JOINT_POS:
+            view.set_joint_positions(value, indices=env_indices, joint_indices=joint_indices)
+        elif obs_type == ObservationType.JOINT_VEL:
+            view.set_joint_velocities(value, indices=env_indices, joint_indices=joint_indices)
+
+    def _read_property(self, view, obs_type, joint_indices=None, env_indices=None, clone=True):
+        if obs_type == ObservationType.BODY_POS:
+            return view.get_world_poses(indices=env_indices, clone=clone)[0] - self._env_pos
+        elif obs_type == ObservationType.BODY_ROT:
+            return view.get_world_poses(indices=env_indices, clone=clone)[1]
+        elif obs_type == ObservationType.BODY_LIN_VEL:
+            return view.get_velocities(indices=env_indices, clone=clone)[:, :3]
+        elif obs_type == ObservationType.BODY_ANG_VEL:
+            return view.get_velocities(indices=env_indices, clone=clone)[:, 3:]
+        elif obs_type == ObservationType.JOINT_POS:
+            return view.get_joint_positions(indices=env_indices, joint_indices=joint_indices, clone=clone)
+        elif obs_type == ObservationType.JOINT_VEL:
+            return view.get_joint_velocities(indices=env_indices, joint_indices=joint_indices, clone=clone)
+
+    def write_data(self, name, value, env_indices=None):
+        view, obs_type, joint_index = self._additionals[name]
+        self._set_property(view, obs_type, value, joint_indices=joint_index, env_indices=env_indices)
+
+    def read_data(self, name, env_indices=None):
+        view, obs_type, joint_index = self._additionals[name]
+        return self._read_property(view, obs_type, joint_indices=joint_index, env_indices=env_indices)
+
+
     
