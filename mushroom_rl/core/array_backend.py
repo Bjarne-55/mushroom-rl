@@ -163,6 +163,10 @@ class ArrayBackend(object):
     @staticmethod
     def full(shape, value):
         raise NotImplementedError
+    
+    @staticmethod
+    def inf():
+        raise NotImplementedError
 
 
 class NumpyBackend(ArrayBackend):
@@ -288,6 +292,10 @@ class NumpyBackend(ArrayBackend):
     @staticmethod
     def full(shape, value):
         return np.full(shape, value)
+    
+    @staticmethod
+    def inf():
+        return np.inf
 
 
 class TorchBackend(ArrayBackend):
@@ -392,7 +400,7 @@ class TorchBackend(ArrayBackend):
         if len(array) > 1 and isinstance(array[0], torch.Tensor):
             return torch.stack(array)
         else:
-            return torch.tensor(array)
+            return torch.tensor(array).to(TorchUtils.get_device())
 
     @staticmethod
     def pack_padded_sequence(array, mask=None):
@@ -420,7 +428,11 @@ class TorchBackend(ArrayBackend):
     
     @staticmethod
     def full(shape, value):
-        return torch.full(shape, value)
+        return torch.full(shape, value).to(TorchUtils.get_device())
+    
+    @staticmethod
+    def inf():
+        return torch.inf
 
 class ListBackend(ArrayBackend):
 
@@ -494,3 +506,7 @@ class ListBackend(ArrayBackend):
     @staticmethod
     def full(shape, value):
         return np.full(shape, value)
+    
+    @staticmethod
+    def inf():
+        return np.inf
