@@ -49,7 +49,7 @@ class VectorizedEnvironment(Environment):
         Move all the specified agents from their current state according to the actions.
 
         Args:
-            env_mask: mask specifying which environments needs reset.
+            env_mask: mask specifying which environments needs to do a step.
             action: set of actions to execute.
 
         Returns:
