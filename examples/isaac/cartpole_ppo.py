@@ -82,9 +82,9 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
 
     dataset = core.evaluate(n_episodes=n_episodes_test, render=False)
 
-    J = torch.mean(dataset.discounted_return)
-    R = torch.mean(dataset.undiscounted_return)
-    E = agent.policy.entropy()
+    J = torch.mean(dataset.discounted_return).item()
+    R = torch.mean(dataset.undiscounted_return).item()
+    E = agent.policy.entropy().item()
 
     logger.epoch_info(0, J=J, R=R, entropy=E)
 
@@ -92,9 +92,9 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
         dataset = core.evaluate(n_episodes=n_episodes_test, render=False)
 
-        J = torch.mean(dataset.discounted_return)
-        R = torch.mean(dataset.undiscounted_return)
-        E = agent.policy.entropy()
+        J = torch.mean(dataset.discounted_return).item()
+        R = torch.mean(dataset.undiscounted_return).item()
+        E = agent.policy.entropy().item()
 
         logger.epoch_info(it+1, J=J, R=R, entropy=E)
 

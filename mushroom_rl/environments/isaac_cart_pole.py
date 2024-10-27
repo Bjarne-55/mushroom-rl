@@ -51,7 +51,7 @@ class IsaacCartPole(IsaacSim):
         self._write_data("poleJointVel", pole_dof_vel, env_indices)
 
     def _preprocess_action(self, action):
-        return action * 400
+        return action * 100 #TODO look into this
     
     def _create_info_dictionary(self, obs):
         info = {}

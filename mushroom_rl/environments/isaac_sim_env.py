@@ -34,6 +34,7 @@ class ObservationType(Enum):
 class IsaacSim(VectorizedEnvironment):
     # TODO add all relevant varibales from mujoco Constructur
     # TODO think about tasks
+    # TODO add collision groups
     def __init__(self, usd_path, action_spec, observation_spec, backend, device, collision_between_envs, 
                  n_envs, env_spacing, gamma, horizon, timestep=None, n_substeps=1, n_intermediate_steps=1, 
                  additional_data_spec=None):
