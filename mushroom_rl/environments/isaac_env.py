@@ -11,6 +11,7 @@ from mushroom_rl.rl_utils.spaces import *
 
 # import carb
 
+#rename to OmniIsaacGymEnv
 
 class IsaacEnv(VectorizedEnvironment):
     """
