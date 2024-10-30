@@ -64,11 +64,14 @@ if __name__ == "__main__":
     print("hello")
     num_envs = 6
     env = IsaacCartPole(num_envs)
+    env.reset()
     while True:
         r = torch.tensor([1, 1, 1, 0, 0, 0]).to("cuda:0")
         env.reset_all(r)
         for _ in range(180):
             action = torch.rand(num_envs, 1) * 10 - 5
+            action = action.to("cuda:0")
             r = torch.ones((num_envs, )).to("cuda:0")
             obs = env.step_all(r, action)
-            print(obs)
+            #print(obs)
+        env.render()

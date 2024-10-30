@@ -15,7 +15,7 @@ from mushroom_rl.core import VectorCore, Logger
 from mushroom_rl.algorithms.actor_critic import TRPO, PPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
-from mushroom_rl.environments.isaac_cart_pole import IsaacCartPole
+from mushroom_rl.environments.isaacsim_envs.isaac_cart_pole import IsaacCartPole
 from mushroom_rl.utils import TorchUtils
 
 
@@ -80,7 +80,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
 
     core = VectorCore(agent, mdp)
 
-    dataset = core.evaluate(n_episodes=n_episodes_test, render=False)
+    dataset = core.evaluate(n_episodes=n_episodes_test, render=True)
 
     J = torch.mean(dataset.discounted_return).item()
     R = torch.mean(dataset.undiscounted_return).item()
@@ -90,7 +90,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
-        dataset = core.evaluate(n_episodes=n_episodes_test, render=False)
+        dataset = core.evaluate(n_episodes=n_episodes_test, render=True)
 
         J = torch.mean(dataset.discounted_return).item()
         R = torch.mean(dataset.undiscounted_return).item()
@@ -100,7 +100,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
 
     logger.info('Press a button to visualize')
     input()
-    core.evaluate(n_episodes=5, render=False)
+    core.evaluate(n_episodes=5, render=True)
 
 
 if __name__ == '__main__':
