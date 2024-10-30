@@ -15,7 +15,7 @@ from mushroom_rl.core import VectorCore, Logger
 from mushroom_rl.algorithms.actor_critic import TRPO, PPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
-from mushroom_rl.environments import IsaacEnv
+from mushroom_rl.environments import OmniIsaacGymEnv
 from mushroom_rl.utils import TorchUtils
 
 
@@ -52,7 +52,8 @@ def experiment(cfg_dict, headless, alg, n_epochs, n_steps, n_steps_per_fit, n_ep
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = IsaacEnv(cfg_dict, headless=headless)
+    mdp = OmniIsaacGymEnv(cfg_dict, headless=True)
+    mdp.render_all()
 
 
     critic_params = dict(network=Network,

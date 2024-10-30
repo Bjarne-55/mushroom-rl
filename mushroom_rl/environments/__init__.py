@@ -63,8 +63,8 @@ except ImportError:
     pass
 
 try:
-    IsaacEnv = None
-    from .isaac_env import IsaacEnv
+    OmniIsaacGymEnv = None
+    from .omni_isaac_gym_env import OmniIsaacGymEnv
 except ImportError:
     pass
 

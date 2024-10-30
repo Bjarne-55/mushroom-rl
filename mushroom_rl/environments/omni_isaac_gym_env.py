@@ -11,9 +11,7 @@ from mushroom_rl.rl_utils.spaces import *
 
 # import carb
 
-#rename to OmniIsaacGymEnv
-
-class IsaacEnv(VectorizedEnvironment):
+class OmniIsaacGymEnv(VectorizedEnvironment):
     """
     Interface for OmniIsaacGymEnvs environments. It makes it possible to use every
     OmniIsaacGymEnvs environment just providing the task.

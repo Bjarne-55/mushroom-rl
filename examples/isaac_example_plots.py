@@ -17,7 +17,7 @@ from mushroom_rl.core import VectorCore, Logger
 from mushroom_rl.algorithms.actor_critic import TRPO, PPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
-from mushroom_rl.environments import IsaacEnv
+from mushroom_rl.environments import OmniIsaacGymEnv
 from mushroom_rl.utils import TorchUtils
 from mushroom_rl.utils.plot import plot_mean_conf
 import matplotlib.pyplot as plt
@@ -153,7 +153,7 @@ def parse_hydra_configs(cfg: DictConfig):
     run_Vs = []
     seeds = []
 
-    mdp = IsaacEnv(cfg_dict, headless=headless)
+    mdp = OmniIsaacGymEnv(cfg_dict, headless=headless)
     
     num_runs = 5
     for i in range(num_runs):
