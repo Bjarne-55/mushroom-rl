@@ -37,7 +37,7 @@ class IsaacSim(VectorizedEnvironment):
     # TODO add collision groups
     def __init__(self, usd_path, action_spec, observation_spec, backend, device, collision_between_envs, 
                  n_envs, env_spacing, gamma, horizon, timestep=None, n_substeps=1, n_intermediate_steps=1, 
-                 additional_data_spec=None):
+                 additional_data_spec=None, collision_groups=None):
         """
         Constructor.
 
@@ -55,7 +55,7 @@ class IsaacSim(VectorizedEnvironment):
             n_envs (int): Number of parallel environments
             env_spacing (int): Distance between environments
         """
-        self._simulation_app = SimulationApp({"headless": False}) 
+        self._simulation_app = SimulationApp({"headless": False, "hide_ui": True}) 
 
         self._backend = backend
         self._device = device
@@ -66,8 +66,10 @@ class IsaacSim(VectorizedEnvironment):
 
         #create world and set task
         self._create_world(timestep)
+        self._set_camera()
+        self._create_light()
         self._set_task(usd_path, n_envs, env_spacing, collision_between_envs, observation_spec, action_spec, 
-                       additional_data_spec)
+                       additional_data_spec, collision_groups)
         self._world.reset()
 
         observation_limits = self._task.get_observation_limits()
@@ -95,16 +97,43 @@ class IsaacSim(VectorizedEnvironment):
             self._world.set_simulation_dt(physics_dt=timestep)
             self._timestep = timestep
 
+    def _set_camera(self):
+        from omni.kit.viewport.utility import get_viewport_from_window_name
+        from omni.kit.viewport.utility.camera_state import ViewportCameraState
+        from pxr import Gf
+
+        viewport_api_2 = get_viewport_from_window_name("Viewport")
+        viewport_api_2.set_active_camera("/OmniverseKit_Persp")
+        camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
+        camera_state.set_position_world(Gf.Vec3d(10, 0, 7.5), True)
+        camera_state.set_target_world(Gf.Vec3d(0, 0, 0), True)
+
+    def _create_light(self, prim_path="/World/defaultDistantLight", intensity=1000):
+        from omni.isaac.core.utils.stage import get_current_stage
+        from pxr import UsdLux
+        stage = get_current_stage()
+        light = UsdLux.DistantLight.Define(stage, prim_path)
+        light.CreateIntensityAttr().Set(intensity)
+
     def _set_task(self, usd_path, n_envs, env_spacing, collision_between_envs, observation_spec, action_spec, 
-                  additional_data_spec):
+                  additional_data_spec, collision_groups):
         from mushroom_rl.environments.isaac_sim_task import IsaacSimTask
 
         self._task = IsaacSimTask(self._world.get_physics_context(), usd_path, n_envs, env_spacing, 
                                   collision_between_envs, observation_spec, action_spec, additional_data_spec, 
-                                  self._backend)
+                                  collision_groups, self._backend)
         self._world.add_task(self._task)
+
+    def render_all(self, env_mask, record=False):#TODO add recording
+        self._world.render()
     
     def step_all(self, env_mask, action):#TODO intermediate and substeps
+        """
+        if torch.any(torch.abs(action) > 1):
+            print(action[torch.abs(action) > 1])
+        else:
+            print("no action")
+        """
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
 
         action = self._preprocess_action(action)
@@ -112,9 +141,9 @@ class IsaacSim(VectorizedEnvironment):
         env_indices = arr_backend.where(env_mask)[0]
         self._task.apply_action(action[env_indices], env_indices)
 
-        self._world.step(render=True)
+        self._world.step(render=False)
 
-        cur_obs = self._task.get_observation(clone=True)
+        cur_obs = self._task.get_observations(clone=True)
         cur_obs = arr_backend.concatenate(list(cur_obs.values()), dim=1)
         absorbing = self.is_absorbing(cur_obs)
         reward = self.reward(cur_obs, action, self._obs, absorbing)
@@ -131,7 +160,7 @@ class IsaacSim(VectorizedEnvironment):
         self._task.reset_env(env_indices, state)
         self.setup(env_indices, state)
         
-        obs = self._task.get_observation(clone=True)
+        obs = self._task.get_observations(clone=True)
         obs = arr_backend.concatenate(list(obs.values()), dim=1)
         self._obs = obs
 
@@ -143,8 +172,11 @@ class IsaacSim(VectorizedEnvironment):
         from omni.isaac.core.utils.torch.maths import set_seed
         return set_seed(seed)
     
-    def stop(self):#TODO
-        pass
+    def stop(self):
+        self._world.reset()
+
+    def __del__(self):
+        self._simulation_app.close()
     
     @property
     def dt(self):
@@ -187,6 +219,38 @@ class IsaacSim(VectorizedEnvironment):
 
         """
         raise NotImplementedError
+    
+    def _check_collision(self, group1, group2):
+        """
+        Check for collision between the specified groups.
+
+        Args:
+            group1 (string): A name referring to an entry contained in the
+                collision_groups list handed to the constructor;
+            group2 (string): A name referring to an entry contained in the
+                collision_groups list handed to the constructor.
+
+        Returns:
+            A flag indicating whether a collision occurred between the given
+            groups or not.
+
+        """
+        return self._task.check_collision(group1, group2)
+
+    def _get_collision_force(self, group1, group2):
+        """
+        Returns the collision force and torques between the specified groups.
+
+        Args:
+            group1 (string): A name referring to an entry contained in the
+                collision_groups list handed to the constructor;
+            group2 (string): A name referring to an entry contained in the
+                collision_groups list handed to the constructor.
+
+        Returns:
+            A 3D vector specifying the collision forces
+        """
+        return self._task.check_collision(group1, group2, get_force=True)
     
     def _read_data(self, name, env_indices=None):
         return self._task.read_data(name, env_indices)
