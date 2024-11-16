@@ -7,6 +7,7 @@ from isaacsim import SimulationApp
 from mushroom_rl.core import VectorizedEnvironment, MDPInfo, ArrayBackend
 from mushroom_rl.rl_utils.spaces import Box
 from mushroom_rl.utils import TorchUtils
+from mushroom_rl.utils.viewer import ImageViewer
 
 class ObservationType(Enum):
     __order__ = "BODY_POS BODY_ROT BODY_LIN_VEL BODY_ANG_VEL JOINT_POS JOINT_VEL"
@@ -34,7 +35,6 @@ class ObservationType(Enum):
 class IsaacSim(VectorizedEnvironment):
     # TODO add all relevant varibales from mujoco Constructur
     # TODO think about tasks
-    # TODO add collision groups
     def __init__(self, usd_path, action_spec, observation_spec, backend, device, collision_between_envs, 
                  n_envs, env_spacing, gamma, horizon, timestep=None, n_substeps=1, n_intermediate_steps=1, 
                  additional_data_spec=None, collision_groups=None):
@@ -55,7 +55,8 @@ class IsaacSim(VectorizedEnvironment):
             n_envs (int): Number of parallel environments
             env_spacing (int): Distance between environments
         """
-        self._simulation_app = SimulationApp({"headless": False, "hide_ui": True}) 
+        self._simulation_app = SimulationApp({"headless": True, "hide_ui": True}) 
+        self._viewer = None
 
         self._backend = backend
         self._device = device
@@ -70,13 +71,15 @@ class IsaacSim(VectorizedEnvironment):
         self._create_light()
         self._set_task(usd_path, n_envs, env_spacing, collision_between_envs, observation_spec, action_spec, 
                        additional_data_spec, collision_groups)
+        #self._register_annotator_for_every_env(n_envs)#TODO
         self._world.reset()
 
         observation_limits = self._task.get_observation_limits()
         observation_space = Box(*observation_limits)
 
-        action_limits = self._task.get_action_limits()
-        action_space = Box(*action_limits)
+        self._max_efforts = self._task.get_max_efforts()
+        action_limits = ArrayBackend.get_array_backend(self._backend).ones_like(self._max_efforts)
+        action_space = Box(-action_limits, action_limits)
 
         mdp_info = MDPInfo(observation_space, action_space, gamma, horizon, self.dt, backend)
         mdp_info = self._modify_mdp_info(mdp_info)
@@ -101,12 +104,29 @@ class IsaacSim(VectorizedEnvironment):
         from omni.kit.viewport.utility import get_viewport_from_window_name
         from omni.kit.viewport.utility.camera_state import ViewportCameraState
         from pxr import Gf
+        import omni.replicator.core as rep
+        import os
 
         viewport_api_2 = get_viewport_from_window_name("Viewport")
         viewport_api_2.set_active_camera("/OmniverseKit_Persp")
         camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
         camera_state.set_position_world(Gf.Vec3d(10, 0, 7.5), True)
         camera_state.set_target_world(Gf.Vec3d(0, 0, 0), True)
+
+        #create annotator
+        rp = rep.create.render_product("/OmniverseKit_Persp", (480, 480))
+        self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
+        self.rgb_annot.attach(rp)
+
+    def _register_annotator_for_every_env(self, number):
+        import omni.replicator.core as rep
+        self.annot = []
+        for i in range(number):
+            rgb = rep.AnnotatorRegistry.get_annotator("rgb")
+            rp = rep.create.render_product(f"/World/envs/env_{i}/Camera", (480, 480))
+            rgb.attach(rp)
+            self.annot.append(rgb)
+
 
     def _create_light(self, prim_path="/World/defaultDistantLight", intensity=1000):
         from omni.isaac.core.utils.stage import get_current_stage
@@ -126,16 +146,25 @@ class IsaacSim(VectorizedEnvironment):
 
     def render_all(self, env_mask, record=False):#TODO add recording
         self._world.render()
-    
+        data = self.rgb_annot.get_data()[..., :3]
+
+        if self._viewer is None:
+            self._viewer = ImageViewer((480, 480), self.dt)
+        self._viewer.display(data)
+
+        if record:
+            x = list(map(lambda a: a.get_data()[..., :3], self.annot))
+            x = np.stack(x, axis=0)
+            #x = np.random.randint(0, 255, (self.number, 480, 480, 3), dtype="uint8")
+            #x = np.zeros((self.number, 480, 480, 3), dtype="uint8")
+            #x[31] = data
+            return x
+
     def step_all(self, env_mask, action):#TODO intermediate and substeps
-        """
-        if torch.any(torch.abs(action) > 1):
-            print(action[torch.abs(action) > 1])
-        else:
-            print("no action")
-        """
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
 
+        action = self._bound(action, self.info.action_space.low, self.info.action_space.high)
+        action = action * self._max_efforts
         action = self._preprocess_action(action)
 
         env_indices = arr_backend.where(env_mask)[0]
@@ -147,11 +176,11 @@ class IsaacSim(VectorizedEnvironment):
         cur_obs = arr_backend.concatenate(list(cur_obs.values()), dim=1)
         absorbing = self.is_absorbing(cur_obs)
         reward = self.reward(cur_obs, action, self._obs, absorbing)
-        info = self._create_info_dictionary(cur_obs)
+        extra_info = self._create_info_dictionary(cur_obs)
 
         self._obs = cur_obs
         
-        return cur_obs, reward, torch.logical_and(absorbing, env_mask), info
+        return cur_obs, reward, torch.logical_and(absorbing, env_mask), extra_info
     
     def reset_all(self, env_mask, state=None):
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
@@ -173,9 +202,15 @@ class IsaacSim(VectorizedEnvironment):
         return set_seed(seed)
     
     def stop(self):
+        if self._viewer is not None:
+            self._viewer.close()
+            self._viewer = None
         self._world.reset()
 
     def __del__(self):
+        if self._viewer is not None:
+            self._viewer.close()
+            self._viewer = None
         self._simulation_app.close()
     
     @property

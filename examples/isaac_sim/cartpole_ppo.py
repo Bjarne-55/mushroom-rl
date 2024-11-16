@@ -47,12 +47,8 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = IsaacCartPole(128)
-    np.random.seed(0)
-    torch.manual_seed(0)
-    mdp.seed(0)
+    mdp = IsaacCartPole(100)
     
-
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
                                     'params': {'lr': 3e-4}},
@@ -75,7 +71,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
 
     core = VectorCore(agent, mdp)
 
-    dataset = core.evaluate(n_episodes=n_episodes_test, render=True)
+    dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
 
     J = torch.mean(dataset.discounted_return).item()
     R = torch.mean(dataset.undiscounted_return).item()
@@ -85,7 +81,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
-        dataset = core.evaluate(n_episodes=n_episodes_test, render=True)
+        dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
 
         J = torch.mean(dataset.discounted_return).item()
         R = torch.mean(dataset.undiscounted_return).item()
@@ -95,7 +91,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
 
     logger.info('Press a button to visualize')
     input()
-    core.evaluate(n_episodes=5, render=True)
+    core.evaluate(n_episodes=5, render=True, record=False)
 
 
 if __name__ == '__main__':

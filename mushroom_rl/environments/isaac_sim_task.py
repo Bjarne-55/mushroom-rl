@@ -48,17 +48,21 @@ class IsaacSimTask(BaseTask):
         stage = get_context().get_stage()
         UsdGeom.Xform.Define(stage, self.ZERO_ENV_PATH)
 
+        camera_prim1 = stage.DefinePrim(self.ZERO_ENV_PATH + "/Camera", "Camera")
+        UsdGeom.Xformable(camera_prim1).AddTranslateOp().Set((5.0, 0, 1.0))
+        UsdGeom.Xformable(camera_prim1).AddRotateXYZOp().Set((90.0, 0.0, 90.0))
+
         #clone env_0
         self._cloner = GridCloner(spacing=self._env_spacing)#check with automatic spacing
         self._cloner.define_base_env(self.BASE_ENV_PATH)
         prim_paths = self._cloner.generate_paths(self.TEMPLATE_ENV_PATH, self._num_envs)
-        self._env_pos = self._cloner.clone(
+        self.env_pos = self._cloner.clone(
             source_prim_path=self.ZERO_ENV_PATH, 
             prim_paths=prim_paths, 
             replicate_physics=True, 
             copy_from_source=False #Faster, but changes made to source prim will also reflect in the cloned prims
         )
-        self._env_pos = ArrayBackend.convert(self._env_pos, to=self._backend)
+        self.env_pos = ArrayBackend.convert(self.env_pos, to=self._backend)
         
         #handle collisions between environments
         if not self._collisions_between_envs:
@@ -154,10 +158,14 @@ class IsaacSimTask(BaseTask):
                 limit[index] = ArrayBackend.get_array_backend(self._backend).inf()
 
         return -limit, limit
-    """
+    
     def get_action_limits(self):
         limit = ArrayBackend.get_array_backend(self._backend).ones(len(self._controlled_joints))
         return -limit, limit
+    """
+    
+    def get_max_efforts(self):
+        return self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints)[0]
     
     def reset_env(self, env_indices, state=None):
         joints_defaults = self.robots.get_joints_default_state()
@@ -168,6 +176,13 @@ class IsaacSimTask(BaseTask):
         self.robots.set_joint_positions(dof_pos, indices=env_indices)
         self.robots.set_joint_velocities(dof_vel, indices=env_indices)
         self.robots.set_joint_efforts(dof_eff, indices=env_indices)
+
+        default_state = self.robots.get_default_state()
+        default_positions = default_state.positions[env_indices]
+        default_orientations = default_state.orientations[env_indices]
+        self.robots.set_world_poses(default_positions, default_orientations, indices=env_indices)
+        velocity = ArrayBackend.get_array_backend(self._backend).zeros((len(env_indices), 6))
+        self.robots.set_velocities(velocity, indices=env_indices)
 
     def post_reset(self):
         """
@@ -210,7 +225,7 @@ class IsaacSimTask(BaseTask):
         Will set values immediately
         """
         if obs_type == ObservationType.BODY_POS:
-            pos = value + self._env_pos[env_indices]
+            pos = value + self.env_pos[env_indices]
             view.set_world_poses(positions=pos, indices=env_indices)
         elif obs_type == ObservationType.BODY_ROT:
             view.set_world_poses(orientations=value, indices=env_indices)
@@ -225,7 +240,7 @@ class IsaacSimTask(BaseTask):
 
     def _read_property(self, view, obs_type, joint_indices=None, env_indices=None, clone=True):
         if obs_type == ObservationType.BODY_POS:
-            return view.get_world_poses(indices=env_indices, clone=clone)[0] - self._env_pos
+            return view.get_world_poses(indices=env_indices, clone=clone)[0] - self.env_pos
         elif obs_type == ObservationType.BODY_ROT:
             return view.get_world_poses(indices=env_indices, clone=clone)[1]
         elif obs_type == ObservationType.BODY_LIN_VEL:

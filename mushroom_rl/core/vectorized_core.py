@@ -37,7 +37,7 @@ class VectorCore(object):
 
         if record_dictionary is None:
             record_dictionary = dict()
-        self._record = [self._build_recorder_class(**record_dictionary) for _ in range(self.env.number)]
+        self._record = [self._build_recorder_class(**{**record_dictionary, "video_name": f"recording_env{i}"}) for i in range(self.env.number)] #name=f"recording_env{i}
 
     def learn(self, n_steps=None, n_episodes=None, n_steps_per_fit=None, n_episodes_per_fit=None,
               render=False, record=False, quiet=False):
