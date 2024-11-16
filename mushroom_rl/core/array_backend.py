@@ -167,6 +167,14 @@ class ArrayBackend(object):
     @staticmethod
     def inf():
         raise NotImplementedError
+    
+    @staticmethod
+    def maximum(x, y):
+        raise NotImplementedError
+    
+    @staticmethod
+    def minimum(x, y):
+        raise NotImplementedError
 
 
 class NumpyBackend(ArrayBackend):
@@ -296,6 +304,14 @@ class NumpyBackend(ArrayBackend):
     @staticmethod
     def inf():
         return np.inf
+    
+    @staticmethod
+    def maximum(x, y):
+        return np.maximum(x, y)
+    
+    @staticmethod
+    def minimum(x, y):
+        return np.minimum(x, y)
 
 
 class TorchBackend(ArrayBackend):
@@ -433,6 +449,14 @@ class TorchBackend(ArrayBackend):
     @staticmethod
     def inf():
         return torch.inf
+    
+    @staticmethod
+    def maximum(x, y):
+        return torch.maximum(x, y)
+    
+    @staticmethod
+    def minimum(x, y):
+        return torch.minimum(x, y)
 
 class ListBackend(ArrayBackend):
 
@@ -510,3 +534,11 @@ class ListBackend(ArrayBackend):
     @staticmethod
     def inf():
         return np.inf
+    
+    @staticmethod
+    def maximum(x, y):
+        return np.maximum(x, y)
+    
+    @staticmethod
+    def minimum(x, y):
+        return np.minimum(x, y)
