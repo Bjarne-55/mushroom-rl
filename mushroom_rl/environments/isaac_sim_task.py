@@ -48,10 +48,6 @@ class IsaacSimTask(BaseTask):
         stage = get_context().get_stage()
         UsdGeom.Xform.Define(stage, self.ZERO_ENV_PATH)
 
-        camera_prim1 = stage.DefinePrim(self.ZERO_ENV_PATH + "/Camera", "Camera")
-        UsdGeom.Xformable(camera_prim1).AddTranslateOp().Set((5.0, 0, 1.0))
-        UsdGeom.Xformable(camera_prim1).AddRotateXYZOp().Set((90.0, 0.0, 90.0))
-
         #clone env_0
         self._cloner = GridCloner(spacing=self._env_spacing)#check with automatic spacing
         self._cloner.define_base_env(self.BASE_ENV_PATH)

@@ -10,34 +10,29 @@ from mushroom_rl.utils import TorchUtils
 from mushroom_rl.utils.viewer import ImageViewer
 
 class ObservationType(Enum):
-    __order__ = "BODY_POS BODY_ROT BODY_LIN_VEL BODY_ANG_VEL JOINT_POS JOINT_VEL"
-    BODY_POS = 0
-    BODY_ROT = 1
-    BODY_LIN_VEL = 2
-    BODY_ANG_VEL = 3
-    JOINT_POS = 4
-    JOINT_VEL = 5
+    BODY_POS = ('body', 3)
+    BODY_ROT = ('body', 4)
+    BODY_LIN_VEL = ('body', 3)
+    BODY_ANG_VEL = ('body', 3)
+    JOINT_POS = ('joint', 1)
+    JOINT_VEL = ('joint', 1)
+
+    def __init__(self, category, length):
+        self.category = category
+        self.length = length
 
     def is_body(self):
-        return self in {
-            ObservationType.BODY_POS, 
-            ObservationType.BODY_ROT, 
-            ObservationType.BODY_LIN_VEL, 
-            ObservationType.BODY_ANG_VEL
-        }
+        return self.category == 'body'
 
     def is_joint(self):
-        return self in {
-            ObservationType.JOINT_POS, 
-            ObservationType.JOINT_VEL
-        }
+        return self.category == 'joint'
 
 class IsaacSim(VectorizedEnvironment):
     # TODO add all relevant varibales from mujoco Constructur
     # TODO think about tasks
     def __init__(self, usd_path, action_spec, observation_spec, backend, device, collision_between_envs, 
                  n_envs, env_spacing, gamma, horizon, timestep=None, n_substeps=1, n_intermediate_steps=1, 
-                 additional_data_spec=None, collision_groups=None):
+                 additional_data_spec=None, collision_groups=None, headless=True):
         """
         Constructor.
 
@@ -55,7 +50,7 @@ class IsaacSim(VectorizedEnvironment):
             n_envs (int): Number of parallel environments
             env_spacing (int): Distance between environments
         """
-        self._simulation_app = SimulationApp({"headless": True, "hide_ui": True}) 
+        self._simulation_app = SimulationApp({"headless": headless, "hide_ui": False}) 
         self._viewer = None
 
         self._backend = backend
@@ -65,13 +60,15 @@ class IsaacSim(VectorizedEnvironment):
         self._n_intermediate_steps = n_intermediate_steps
         self._n_substeps = n_substeps
 
+        #observation specifcation
+        self._obs_idx_map = self._compute_obs_indices(observation_spec)
+
         #create world and set task
         self._create_world(timestep)
         self._set_camera()
         self._create_light()
         self._set_task(usd_path, n_envs, env_spacing, collision_between_envs, observation_spec, action_spec, 
                        additional_data_spec, collision_groups)
-        #self._register_annotator_for_every_env(n_envs)#TODO
         self._world.reset()
 
         observation_limits = self._task.get_observation_limits()
@@ -85,6 +82,18 @@ class IsaacSim(VectorizedEnvironment):
         mdp_info = self._modify_mdp_info(mdp_info)
         
         super().__init__(mdp_info, n_envs)
+
+    def _compute_obs_indices(self, observation_spec):
+        index = 0
+        mapping = {}
+        for name, _, obs_type in observation_spec:
+            mapping[name] = (index, index + obs_type.length)
+            index += obs_type.length
+        return mapping
+    
+    def _get_from_obs(self, obs, name):
+        indices = self._obs_idx_map[name]
+        return obs[indices[0]:indices[1]]
 
     def _create_world(self, timestep):
         from omni.isaac.core.world import World
@@ -118,16 +127,6 @@ class IsaacSim(VectorizedEnvironment):
         self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
         self.rgb_annot.attach(rp)
 
-    def _register_annotator_for_every_env(self, number):
-        import omni.replicator.core as rep
-        self.annot = []
-        for i in range(number):
-            rgb = rep.AnnotatorRegistry.get_annotator("rgb")
-            rp = rep.create.render_product(f"/World/envs/env_{i}/Camera", (480, 480))
-            rgb.attach(rp)
-            self.annot.append(rgb)
-
-
     def _create_light(self, prim_path="/World/defaultDistantLight", intensity=1000):
         from omni.isaac.core.utils.stage import get_current_stage
         from pxr import UsdLux
@@ -153,12 +152,7 @@ class IsaacSim(VectorizedEnvironment):
         self._viewer.display(data)
 
         if record:
-            x = list(map(lambda a: a.get_data()[..., :3], self.annot))
-            x = np.stack(x, axis=0)
-            #x = np.random.randint(0, 255, (self.number, 480, 480, 3), dtype="uint8")
-            #x = np.zeros((self.number, 480, 480, 3), dtype="uint8")
-            #x[31] = data
-            return x
+            return data
 
     def step_all(self, env_mask, action):#TODO intermediate and substeps
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
@@ -174,6 +168,7 @@ class IsaacSim(VectorizedEnvironment):
 
         cur_obs = self._task.get_observations(clone=True)
         cur_obs = arr_backend.concatenate(list(cur_obs.values()), dim=1)
+
         absorbing = self.is_absorbing(cur_obs)
         reward = self.reward(cur_obs, action, self._obs, absorbing)
         extra_info = self._create_info_dictionary(cur_obs)
@@ -196,6 +191,17 @@ class IsaacSim(VectorizedEnvironment):
         info = self._create_info_dictionary(obs)
 
         return obs, info
+    
+    """
+    def _create_observation(self, obs):
+        size = next(reversed(self._obs_idx_map.values()))
+        arr = ArrayBackend.get_array_backend(self._backend).empty((self.number, size), self._device)
+
+        for name, indices in self._obs_idx_map.items():
+            arr[indices[0]:indices[1]] = obs[name]
+            
+        return arr
+    """
 
     def seed(self, seed=-1):
         from omni.isaac.core.utils.torch.maths import set_seed
