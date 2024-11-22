@@ -80,15 +80,18 @@ def experiment(mdp, alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
     Rs = []
     Es = []
     Vs = []
+    As = []
 
     J = torch.mean(dataset.discounted_return).to("cpu")
     R = torch.mean(dataset.undiscounted_return).to("cpu")
     E = agent.policy.entropy().to("cpu")
     V = torch.mean(agent._V(dataset.get_init_states())).detach().to("cpu")
+    A = torch.sum(dataset.absorbing).to("cpu")
     Js.append(J)
     Rs.append(R)
     Es.append(E)
     Vs.append(V)
+    As.append(A)
 
     logger.epoch_info(0, J=J, R=R, entropy=E, V=V)
     for it in trange(n_epochs, leave=False):
@@ -99,16 +102,18 @@ def experiment(mdp, alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
         R = torch.mean(dataset.undiscounted_return).to("cpu")
         E = agent.policy.entropy().to("cpu")
         V = torch.mean(agent._V(dataset.get_init_states())).detach().to("cpu")
+        A = torch.sum(dataset.absorbing).to("cpu")
         Js.append(J)
         Rs.append(R)
         Es.append(E)
         Vs.append(V)
+        As.append(A)
 
         logger.epoch_info(it+1, J=J, R=R, entropy=E, V=V)
 
     #logger.info('Press a button to visualize')
     #input()
-    core.evaluate(n_episodes=5, render=True)
+    core.evaluate(n_episodes=5, render=True, record=True)
 
     return Js, Rs, Es, Vs    
 
@@ -142,7 +147,7 @@ if __name__ == '__main__':
     run_Vs = []
     seeds = []
 
-    mdp = IsaacCartPole(128)
+    mdp = IsaacCartPole(180)
     
     num_runs = 5
     for i in range(num_runs):
@@ -152,7 +157,7 @@ if __name__ == '__main__':
         mdp.seed(seed)
 
         Js, Rs, Es, Vs = experiment(mdp=mdp, alg=PPO, n_epochs=15, n_steps=30000, n_steps_per_fit=3000,
-                   n_episodes_test=512, alg_params=ppo_params, policy_params=policy_params)
+                   n_episodes_test=180, alg_params=ppo_params, policy_params=policy_params)
         
         mdp.stop()
         

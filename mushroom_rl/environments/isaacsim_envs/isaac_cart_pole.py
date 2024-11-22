@@ -31,15 +31,14 @@ class IsaacCartPole(IsaacSim):
                          env_spacing, 0.99, 200, additional_data_spec=additional_data_spec)
         
     def reward(self, obs, action, next_obs, absorbing):
-        pole_joint_pos = obs[:, 0]
-        cart_joint_pos = obs[:, 2]
+        pole_joint_pos = next_obs[:, 0]
+        cart_joint_pos = next_obs[:, 2]
         reward = 1.0 - torch.abs(cart_joint_pos)
-        reward = torch.where(torch.abs(pole_joint_pos) > np.pi / 2, -torch.ones_like(pole_joint_pos), reward)
+        reward = torch.where(absorbing, -torch.ones_like(pole_joint_pos), reward)
         return reward
 
     def is_absorbing(self, obs):
         pole_joint_pos = obs[:, 0]
-        cart_joint_pos = obs[:, 2]
         ones = torch.ones_like(pole_joint_pos, dtype=bool)
         zeros = torch.zeros_like(pole_joint_pos, dtype=bool)
         dropped = torch.where(torch.abs(pole_joint_pos) > np.pi / 2, ones, zeros)
@@ -48,11 +47,11 @@ class IsaacCartPole(IsaacSim):
     def setup(self, env_indices, obs):
         num_environments = len(env_indices)
 
-        cart_dof_pos = 0.5 * (2.0 * torch.rand(num_environments, 1, device=self._device) - 1)
-        pole_dof_pos = 0.1 * np.pi * (2.0 * torch.rand(num_environments, 1, device=self._device) - 1)
+        cart_dof_pos = 0.25 * (2.0 * torch.rand(num_environments, 1, device=self._device) - 1)
+        pole_dof_pos = 0.05 * np.pi * (2.0 * torch.rand(num_environments, 1, device=self._device) - 1)
 
-        cart_dof_vel = 0.5 * (2.0 * torch.rand(num_environments, 1, device=self._device) - 1)
-        pole_dof_vel = 0.2 * np.pi * (2.0 * torch.rand(num_environments, 1, device=self._device) - 1)
+        cart_dof_vel = 0.25 * (2.0 * torch.rand(num_environments, 1, device=self._device) - 1)
+        pole_dof_vel = 0.05 * np.pi * (2.0 * torch.rand(num_environments, 1, device=self._device) - 1)
 
         self._write_data("cartJointPos", cart_dof_pos, env_indices)
         self._write_data("poleJointPos", pole_dof_pos, env_indices)

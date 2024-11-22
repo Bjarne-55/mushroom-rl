@@ -47,7 +47,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = IsaacCartPole(100)
+    mdp = IsaacCartPole(180)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
@@ -71,27 +71,29 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
 
     core = VectorCore(agent, mdp)
 
-    dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
+    dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
 
     J = torch.mean(dataset.discounted_return).item()
     R = torch.mean(dataset.undiscounted_return).item()
     E = agent.policy.entropy().item()
+    A = torch.sum(dataset.absorbing).item()
 
-    logger.epoch_info(0, J=J, R=R, entropy=E)
+    logger.epoch_info(0, J=J, R=R, entropy=E, absorbing=A)
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
-        dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
+        dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
 
         J = torch.mean(dataset.discounted_return).item()
         R = torch.mean(dataset.undiscounted_return).item()
         E = agent.policy.entropy().item()
+        A = torch.sum(dataset.absorbing).item()
 
-        logger.epoch_info(it+1, J=J, R=R, entropy=E)
+        logger.epoch_info(it+1, J=J, R=R, entropy=E, absorbing=A)
 
     logger.info('Press a button to visualize')
     input()
-    core.evaluate(n_episodes=5, render=True, record=False)
+    core.evaluate(n_episodes=5, render=True, record=True)
 
 
 if __name__ == '__main__':
@@ -109,5 +111,5 @@ if __name__ == '__main__':
         use_cuda=True
 
     )
-    experiment(alg=PPO, n_epochs=40, n_steps=30000, n_steps_per_fit=3000,
-                   n_episodes_test=512, alg_params=ppo_params, policy_params=policy_params)
+    experiment(alg=PPO, n_epochs=20, n_steps=30000, n_steps_per_fit=3000,
+                   n_episodes_test=180, alg_params=ppo_params, policy_params=policy_params)
