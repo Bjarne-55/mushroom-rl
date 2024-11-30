@@ -5,16 +5,15 @@ from omni.isaac.core.tasks import BaseTask
 from omni.isaac.core.utils.stage import add_reference_to_stage
 from omni.isaac.core.articulations import ArticulationView
 from omni.isaac.cloner import GridCloner
-from omni.isaac.core.robots.robot import Robot
 from omni.usd import get_context
-from pxr import Gf, UsdGeom, UsdLux, PhysxSchema
-from omni.isaac.core.utils.prims import get_prim_at_path
-from omni.isaac.core.prims import RigidPrimView, RigidContactView
+from pxr import UsdGeom, PhysxSchema
+from omni.isaac.core.prims import RigidPrimView
 
 from omni.physx.scripts.physicsUtils import *
-from omni.physx import get_physx_interface, get_physx_simulation_interface
+from omni.physx import get_physx_simulation_interface
 
-from mushroom_rl.environments.isaac_sim_env import ObservationType, ActionType #TODO
+from mushroom_rl.environments.isaac_sim_env import ActionType #TODO
+from mushroom_rl.utils.isaac_sim import ObservationType
 from mushroom_rl.core.array_backend import ArrayBackend
 from mushroom_rl.utils import TorchUtils
 
@@ -166,6 +165,17 @@ class IsaacSimTask(BaseTask):
         limit = ArrayBackend.get_array_backend(self._backend).ones(len(self._controlled_joints))
         return -limit, limit
     """
+
+    def get_action_limits(self):
+        if self._action_type == ActionType.EFFORT:
+            limit = self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints)[0]
+            return -limit, limit
+        elif self._action_type == ActionType.POSITION:
+            limit = self.robots.get_dof_limits()[0][self._controlled_joints].T
+            return limit[0], limit[1]
+        else:
+            limit = self.robots.get_joint_max_velocities(indices=[0], joint_indices=self._controlled_joints, clone=True)[0]
+            return -limit, limit
     
     def get_max_actions(self):
         if self._action_type == ActionType.EFFORT:
@@ -200,6 +210,9 @@ class IsaacSimTask(BaseTask):
         for joint_name in self._action_spec:
             joint_index = self.robots.get_dof_index(joint_name)
             self._controlled_joints.append(joint_index)
+        
+        #v = torch.ones((self._num_envs, len(self._controlled_joints))) * 7.
+        #self.robots.set_max_efforts(v)
 
         self._observers = []
         for name, path, obs_type in self._observation_spec:

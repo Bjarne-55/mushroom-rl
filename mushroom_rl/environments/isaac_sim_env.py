@@ -9,24 +9,7 @@ from mushroom_rl.core import VectorizedEnvironment, MDPInfo, ArrayBackend
 from mushroom_rl.rl_utils.spaces import Box
 from mushroom_rl.utils import TorchUtils
 from mushroom_rl.utils.viewer import ImageViewer
-
-class ObservationType(Enum):
-    BODY_POS = (0, 'body', 3)
-    BODY_ROT = (1, 'body', 4)
-    BODY_LIN_VEL = (2, 'body', 3)
-    BODY_ANG_VEL = (3, 'body', 3)
-    JOINT_POS = (4, 'joint', 1)
-    JOINT_VEL = (5, 'joint', 1)
-
-    def __init__(self, id, category, length):
-        self.category = category
-        self.length = length
-
-    def is_body(self):
-        return self.category == 'body'
-
-    def is_joint(self):
-        return self.category == 'joint'
+from mushroom_rl.utils.isaac_sim import ObservationHelper, ObservationType
     
 class ActionType(Enum):
     EFFORT = "joint_efforts"
@@ -57,11 +40,6 @@ class IsaacSim(VectorizedEnvironment):
             env_spacing (int): Distance between environments
         """
         self._simulation_app = SimulationApp({"headless": headless, "hide_ui": False}) 
-        from omni.isaac.core.utils.torch.maths import set_seed
-        torch.manual_seed(1)
-        random.seed(1)
-        np.random.seed(1)
-        set_seed(1)
         self._viewer = None
 
         self._backend = backend
@@ -72,9 +50,6 @@ class IsaacSim(VectorizedEnvironment):
 
         self._n_intermediate_steps = n_intermediate_steps
         self._n_substeps = n_substeps
-
-        #observation specifcation
-        self._obs_idx_map = self._compute_obs_indices(observation_spec)
 
         #create world and set task
         self._create_world(timestep)
@@ -87,26 +62,15 @@ class IsaacSim(VectorizedEnvironment):
         observation_limits = self._task.get_observation_limits()
         observation_space = Box(*observation_limits)
 
-        self._max_actions = self._task.get_max_actions().to(self._device)
-        action_limits = ArrayBackend.get_array_backend(self._backend).ones(len(action_spec))
-        action_space = Box(-action_limits, action_limits)
+        self.observation_helper = ObservationHelper(observation_spec, observation_limits, backend, n_envs, device)
+
+        action_limits = self._task.get_action_limits()
+        action_space = Box(action_limits[0].to(self._device), action_limits[1].to(self._device))
 
         mdp_info = MDPInfo(observation_space, action_space, gamma, horizon, self.dt, backend)
         mdp_info = self._modify_mdp_info(mdp_info)
         
         super().__init__(mdp_info, n_envs)
-
-    def _compute_obs_indices(self, observation_spec):
-        index = 0
-        mapping = {}
-        for name, _, obs_type in observation_spec:
-            mapping[name] = (index, index + obs_type.length)
-            index += obs_type.length
-        return mapping
-    
-    def _get_from_obs(self, obs, name):
-        indices = self._obs_idx_map[name]
-        return obs[:, indices[0]:indices[1]]
 
     def _create_world(self, timestep):
         from omni.isaac.core.world import World
@@ -116,10 +80,13 @@ class IsaacSim(VectorizedEnvironment):
             backend=self._backend,
             device=self._device
         )
+        self._physics_context = self._world.get_physics_context()
         if timestep is None:
             self._timestep = self._world.get_physics_dt()
+            
+            self._physics_context.set_physics_dt(dt=self._timestep, substeps=self._n_substeps)
         else:
-            self._world.set_simulation_dt(physics_dt=timestep)
+            self._physics_context.set_physics_dt(dt=timestep, substeps=self._n_substeps)
             self._timestep = timestep
 
     def _set_camera(self):
@@ -132,7 +99,7 @@ class IsaacSim(VectorizedEnvironment):
         viewport_api_2 = get_viewport_from_window_name("Viewport")
         viewport_api_2.set_active_camera("/OmniverseKit_Persp")
         camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
-        camera_state.set_position_world(Gf.Vec3d(7.5, 0, 5), True)
+        camera_state.set_position_world(Gf.Vec3d(10, 0, 6), True)
         camera_state.set_target_world(Gf.Vec3d(0, 0, 0), True)
 
         #create annotator
@@ -151,7 +118,7 @@ class IsaacSim(VectorizedEnvironment):
                   additional_data_spec, collision_groups):
         from mushroom_rl.environments.isaac_sim_task import IsaacSimTask
 
-        self._task = IsaacSimTask(self._world.get_physics_context(), usd_path, n_envs, env_spacing, 
+        self._task = IsaacSimTask(self._physics_context, usd_path, n_envs, env_spacing, 
                                   collision_between_envs, observation_spec, action_spec, additional_data_spec, 
                                   collision_groups, self._backend, self._action_type)
         self._world.add_task(self._task)
@@ -170,6 +137,7 @@ class IsaacSim(VectorizedEnvironment):
     def step_all(self, env_mask, action):#TODO intermediate and substeps
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
 
+        """
         action = self._bound(action, self.info.action_space.low, self.info.action_space.high)
         if self._action_type == ActionType.POSITION:
             lower_limits = self._max_actions[:, 0]
@@ -177,21 +145,25 @@ class IsaacSim(VectorizedEnvironment):
             action = lower_limits + (action + 1) * 0.5 * (upper_limits - lower_limits)
         else:
             action = action * self._max_actions
+        """
         action = self._preprocess_action(action)
 
         env_indices = arr_backend.where(env_mask)[0]
         self._task.apply_action(action[env_indices], env_indices)
 
-        self._world.step(render=False)
+        for _ in range(self._n_intermediate_steps):
+            self._world.step(render=False)
 
-        cur_obs = self._task.get_observations(clone=True)
-        cur_obs = arr_backend.concatenate(list(cur_obs.values()), dim=1)
+        cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
+        cur_obs = self._create_observation(cur_obs)
 
         absorbing = self.is_absorbing(cur_obs)
         reward = self.reward(self._obs, action, cur_obs, absorbing)
         extra_info = self._create_info_dictionary(cur_obs)
 
-        self._obs = cur_obs
+        self._obs = cur_obs.clone().detach()
+
+        cur_obs = self._modify_observation(cur_obs)
         
         return cur_obs.clone().detach(), reward.clone().detach(), torch.logical_and(absorbing, env_mask).clone().detach(), extra_info
     
@@ -202,11 +174,12 @@ class IsaacSim(VectorizedEnvironment):
         self._task.reset_env(env_indices, state)
         self.setup(env_indices, state)
         
-        obs = self._task.get_observations(clone=True)
-        obs = arr_backend.concatenate(list(obs.values()), dim=1)
-        self._obs = obs
+        obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
+        obs = self._create_observation(obs)
+        self._obs = obs.clone().detach()
 
         info = self._create_info_dictionary(obs)
+        obs = self._modify_observation(obs)
 
         return obs.clone().detach(), info
     
@@ -220,6 +193,23 @@ class IsaacSim(VectorizedEnvironment):
             
         return arr
     """
+    def _create_observation(self, obs):
+        return obs
+
+    def _modify_observation(self, obs):
+        """
+        This method can be overridden to edit the created observation. This is done after the reward and absorbing
+        functions are evaluated. Especially useful to transform the observation into different frames. If the original
+        observation order is not preserved, the helper functions in ObervationHelper breaks.
+
+        Args:
+            obs (np.ndarray): the generated observation
+
+        Returns:
+            The environment observation.
+
+        """
+        return obs
 
     def seed(self, seed=-1):
         from omni.isaac.core.utils.torch.maths import set_seed
