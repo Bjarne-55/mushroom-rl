@@ -6,14 +6,14 @@ from omni.isaac.core.utils.stage import add_reference_to_stage
 from omni.isaac.core.articulations import ArticulationView
 from omni.isaac.cloner import GridCloner
 from omni.usd import get_context
-from pxr import UsdGeom, PhysxSchema
+from pxr import UsdGeom, PhysxSchema, UsdPhysics, Sdf
 from omni.isaac.core.prims import RigidPrimView
 
 from omni.physx.scripts.physicsUtils import *
 from omni.physx import get_physx_simulation_interface
 
 from mushroom_rl.environments.isaac_sim_env import ActionType #TODO
-from mushroom_rl.utils.isaac_sim import ObservationType
+from mushroom_rl.utils.isaac_sim import ObservationType, CollisionHelper
 from mushroom_rl.core.array_backend import ArrayBackend
 from mushroom_rl.utils import TorchUtils
 
@@ -35,8 +35,9 @@ class IsaacSimTask(BaseTask):
         self._action_spec = action_spec
         self._additional_data_spec = additional_data_spec
         self._backend = backend
-        self._collision_groups = {key: group for key, group in collision_groups} if collision_groups is not None else {}
         self._action_type = action_type
+
+        self.collision_helper = CollisionHelper(collision_groups, backend, num_envs)
 
         super().__init__("CustomNameTask")#TODO
     
@@ -80,7 +81,7 @@ class IsaacSimTask(BaseTask):
         #register view
         self._views = {}
 
-        for key, group in self._collision_groups.items():
+        for key, group in self.collision_helper.collision_groups.items():
             for path in group:
                 if path.startswith("/World/"):
                     continue
@@ -88,7 +89,7 @@ class IsaacSimTask(BaseTask):
                     prim_path = self.TEMPLATE_ENV_PATH + "_" + str(i) + "/Robot" + path
                     prim = stage.GetPrimAtPath(prim_path)
                     contactReportAPI = PhysxSchema.PhysxContactReportAPI.Apply(prim)
-                    contactReportAPI.CreateThresholdAttr().Set(1)
+                    contactReportAPI.CreateThresholdAttr().Set(0.1)
 
                 view = RigidPrimView(
                     prim_paths_expr= self.BASE_ENV_PATH + "/.*/Robot" + path,
@@ -281,83 +282,5 @@ class IsaacSimTask(BaseTask):
         view, obs_type, joint_index = self._additionals[name]
         return self._read_property(view, obs_type, joint_indices=joint_index, env_indices=env_indices)
     
-    def _extract_name_and_env(self, path):
-        if not path.startswith("/World/envs/"):
-            return path, None
-        path = path.split("/", 5)  
-        name = "/" + path[5]
-        env = int(path[3][4:])
-        return name, env
-    
-    def _collision_occurs(self, group1, group2, contact_header):
-        if str(contact_header.type) == "ContactEventType.CONTACT_LOST":#TODO find real import
-            return False, None
-
-        collider1 = str(PhysicsSchemaTools.intToSdfPath(contact_header.actor0)) # First prim involved in collision
-        collider2 = str(PhysicsSchemaTools.intToSdfPath(contact_header.actor1)) # Second prim involved in collision
-
-        collider1, env1 = self._extract_name_and_env(collider1)
-        collider2, env2 = self._extract_name_and_env(collider2)
-        assert env1 is not None or env2 is not None
-
-        if env1 is None:
-            env = env2
-        elif env2 is None:
-            env = env1
-        elif env1 != env2: #collisions between environments are not supported by collision groups
-            return False, None
-        else:
-            env = env1
-
-        c = collider1 in group1 and collider2 in group2
-        c_trans = collider2 in group1 and collider1 in group2
-
-        return c or c_trans, env
-    
-    def check_collision(self, group1, group2):#TODO add collision count
-        #https://docs.omniverse.nvidia.com/kit/docs/omni_physics/latest/extensions/runtime/source/omni.physx/docs/index.html#contact-reports
-        collision_report = get_physx_simulation_interface().get_contact_report()
-        collision_in_env = ArrayBackend.get_array_backend(self._backend).zeros(self._num_envs, dtype=bool)
-
-        prims1 = self._collision_groups[group1]
-        prims2 = self._collision_groups[group2]
-
-        for contact_header in collision_report[0]:
-            collision, env = self._collision_occurs(prims1, prims2, contact_header)
-
-            if collision:
-                collision_in_env[env] = True
-
-        return collision_in_env
-    
-    def get_collision_force(self, group1, group2):
-        collision_report = get_physx_simulation_interface().get_contact_report()
-        collision_force = ArrayBackend.get_array_backend(self._backend).zeros(self._num_envs, 3)
-
-        prims1 = self._collision_groups[group1]
-        prims2 = self._collision_groups[group2]
-
-        for contact_header in collision_report[0]:
-            collision, env = self._collision_occurs(prims1, prims2, contact_header)
-
-            if collision:
-                contact_data_offset = contact_header.contact_data_offset
-                contact_data = collision_report[1]
-                collision_force[env] = ArrayBackend.convert(list(contact_data[contact_data_offset].normal), to=self._backend)
-
-        return collision_force
-    
-    def get_collision_count(self, group1, group2):
-        collision_report = get_physx_simulation_interface().get_contact_report()
-        collision_in_env = ArrayBackend.get_array_backend(self._backend).zeros(self._num_envs, dtype=int)
-
-        prims1 = self._collision_groups[group1]
-        prims2 = self._collision_groups[group2]
-
-        for contact_header in collision_report[0]:
-            collision, env = self._collision_occurs(prims1, prims2, contact_header)
-
-            if collision:
-                collision_in_env[env] += 1
-
-        return collision_in_env
+    def set_joint_data(self, value, type, joint_indices=None, env_indices=None):
+        self._set_property(self.robots, type, value, joint_indices, env_indices)

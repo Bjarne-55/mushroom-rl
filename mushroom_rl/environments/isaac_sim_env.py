@@ -39,6 +39,7 @@ class IsaacSim(VectorizedEnvironment):
             n_envs (int): Number of parallel environments
             env_spacing (int): Distance between environments
         """
+        self._headless = headless
         self._simulation_app = SimulationApp({"headless": headless, "hide_ui": False}) 
         self._viewer = None
 
@@ -69,6 +70,8 @@ class IsaacSim(VectorizedEnvironment):
 
         mdp_info = MDPInfo(observation_space, action_space, gamma, horizon, self.dt, backend)
         mdp_info = self._modify_mdp_info(mdp_info)
+
+        self._recompute_action_per_step = type(self)._compute_action != IsaacSim._compute_action
         
         super().__init__(mdp_info, n_envs)
 
@@ -81,9 +84,10 @@ class IsaacSim(VectorizedEnvironment):
             device=self._device
         )
         self._physics_context = self._world.get_physics_context()
+        self._physics_context.set_gpu_found_lost_aggregate_pairs_capacity(2 * 1024)
+
         if timestep is None:
             self._timestep = self._world.get_physics_dt()
-            
             self._physics_context.set_physics_dt(dt=self._timestep, substeps=self._n_substeps)
         else:
             self._physics_context.set_physics_dt(dt=timestep, substeps=self._n_substeps)
@@ -99,11 +103,11 @@ class IsaacSim(VectorizedEnvironment):
         viewport_api_2 = get_viewport_from_window_name("Viewport")
         viewport_api_2.set_active_camera("/OmniverseKit_Persp")
         camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
-        camera_state.set_position_world(Gf.Vec3d(10, 0, 6), True)
-        camera_state.set_target_world(Gf.Vec3d(0, 0, 0), True)
+        camera_state.set_position_world(Gf.Vec3d(25, 0, 6), True)
+        camera_state.set_target_world(Gf.Vec3d(5, 0, 0), True)
 
         #create annotator
-        rp = rep.create.render_product("/OmniverseKit_Persp", (480, 480))
+        rp = rep.create.render_product("/OmniverseKit_Persp", (1280, 720))
         self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
         self.rgb_annot.attach(rp)
 
@@ -128,7 +132,7 @@ class IsaacSim(VectorizedEnvironment):
         data = self.rgb_annot.get_data()[..., :3]
 
         if self._viewer is None:
-            self._viewer = ImageViewer((480, 480), self.dt)
+            self._viewer = ImageViewer((1280, 720), self.dt)
         self._viewer.display(data)
 
         if record:
@@ -136,26 +140,31 @@ class IsaacSim(VectorizedEnvironment):
 
     def step_all(self, env_mask, action):#TODO intermediate and substeps
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
+        self._task.collision_helper.clear()
 
-        """
-        action = self._bound(action, self.info.action_space.low, self.info.action_space.high)
-        if self._action_type == ActionType.POSITION:
-            lower_limits = self._max_actions[:, 0]
-            upper_limits = self._max_actions[:, 1]
-            action = lower_limits + (action + 1) * 0.5 * (upper_limits - lower_limits)
-        else:
-            action = action * self._max_actions
-        """
+        cur_obs = self._obs.clone().detach()
+
         action = self._preprocess_action(action)
 
         env_indices = arr_backend.where(env_mask)[0]
-        self._task.apply_action(action[env_indices], env_indices)
+
+        ctrl_action = None
 
         for _ in range(self._n_intermediate_steps):
-            self._world.step(render=False)
+            if self._recompute_action_per_step or ctrl_action is None:
+                ctrl_action = self._compute_action(cur_obs, action)
 
-        cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
-        cur_obs = self._create_observation(cur_obs)
+            self._task.apply_action(ctrl_action[env_indices], env_indices)
+            self._world.step(render=not self._headless)
+            self._task.collision_helper.gather_collisions()
+
+            if self._recompute_action_per_step:
+                cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
+                cur_obs = self._create_observation(cur_obs)
+
+        if not self._recompute_action_per_step:
+            cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
+            cur_obs = self._create_observation(cur_obs)
 
         absorbing = self.is_absorbing(cur_obs)
         reward = self.reward(self._obs, action, cur_obs, absorbing)
@@ -183,16 +192,6 @@ class IsaacSim(VectorizedEnvironment):
 
         return obs.clone().detach(), info
     
-    """
-    def _create_observation(self, obs):
-        size = next(reversed(self._obs_idx_map.values()))
-        arr = ArrayBackend.get_array_backend(self._backend).empty((self.number, size), self._device)
-
-        for name, indices in self._obs_idx_map.items():
-            arr[indices[0]:indices[1]] = obs[name]
-            
-        return arr
-    """
     def _create_observation(self, obs):
         return obs
 
@@ -231,6 +230,21 @@ class IsaacSim(VectorizedEnvironment):
     @property
     def dt(self):
         return self._timestep * self._n_intermediate_steps * self._n_substeps
+    
+    def _compute_action(self, obs, action):
+        """
+        Compute a transformation of the action at every intermediate step.
+        Useful to add control signals simulated directly in python.
+
+        Args:
+            obs (np.ndarray): numpy array with the current state of teh simulation;
+            action (np.ndarray): numpy array with the actions, provided at every step.
+
+        Returns:
+            The action to be set in the actual pybullet simulation.
+
+        """
+        return action
     
     def reward(self, obs, action, next_obs, absorbing):
         """
@@ -285,7 +299,7 @@ class IsaacSim(VectorizedEnvironment):
             groups or not.
 
         """
-        return self._task.check_collision(group1, group2)
+        return self._task.collision_helper.check_collision(group1, group2)
 
     def _get_collision_force(self, group1, group2):
         """
@@ -300,17 +314,21 @@ class IsaacSim(VectorizedEnvironment):
         Returns:
             A 3D vector specifying the collision forces
         """
-        return self._task.get_collision_force(group1, group2)
+        return self._task.collision_helper.get_collision_force(group1, group2)
     
     def _get_collision_count(self, group1, group2):
-        return self._task.get_collision_count(group1, group2)
+        return self._task.collision_helper.get_collision_count(group1, group2)
     
     def _read_data(self, name, env_indices=None):
         return self._task.read_data(name, env_indices)
 
     def _write_data(self, name, value, env_indices=None):
         self._task.write_data(name, value, env_indices)
-    
+
+    def _set_joint_data(self, value, type, joint_indices=None, env_indices=None):
+        assert type == ObservationType.JOINT_POS or type == ObservationType.JOINT_VEL
+        self._task.set_joint_data(value, type, joint_indices, env_indices)
+        
     def _preprocess_action(self, action):
         """
         Compute a transformation of the action provided to the
