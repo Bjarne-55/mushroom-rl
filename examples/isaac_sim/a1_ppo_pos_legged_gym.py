@@ -54,7 +54,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = IsaacA1Description(128, 200, True)
+    mdp = IsaacA1Description(200, 200, True)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
