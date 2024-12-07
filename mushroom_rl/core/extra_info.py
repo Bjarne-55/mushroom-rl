@@ -302,7 +302,10 @@ class ExtraInfo(Serializable, UserDict):
         for key, key_path in self._key_mapping.items():
             value = self._find_element_by_key_path(step_data, key_path)
             value = self._convert(value, to)
-            output[key][index] = value
+            if value is ArrayBackend.get_array_backend(to).none() or self._n_envs == 1:
+                output[key][index] = value
+            else:
+                output[key][index] = value[:self._n_envs]
     
     def _append_list_to_output(self, output, step_data, index, to):
         """
@@ -317,6 +320,8 @@ class ExtraInfo(Serializable, UserDict):
         assert(self._n_envs > 1)
         for key, key_path in self._key_mapping.items():
             for i, env_data in enumerate(step_data):
+                if i >= self._n_envs:
+                    break
                 value = self._find_element_by_key_path(env_data, key_path)
                 value = self._convert(value, to)
                 output[key][index][i] = value

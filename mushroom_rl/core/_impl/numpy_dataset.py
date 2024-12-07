@@ -114,21 +114,36 @@ class NumpyDataset(Serializable):
                mask=None):
         i = self._len
 
-        self._states[i] = state
-        self._actions[i] = action
-        self._rewards[i] = reward
-        self._next_states[i] = next_state
-        self._absorbing[i] = absorbing
-        self._last[i] = last
+        if mask is None:
+            self._states[i] = state
+            self._actions[i] = action
+            self._rewards[i] = reward
+            self._next_states[i] = next_state
+            self._absorbing[i] = absorbing
+            self._last[i] = last
 
-        if self.is_stateful:
-            self._policy_states[i] = policy_state
-            self._policy_next_states[i] = policy_next_state
+            if self.is_stateful:
+                self._policy_states[i] = policy_state
+                self._policy_next_states[i] = policy_next_state
+            else:
+                assert (policy_state is None) and (policy_next_state is None)
         else:
-            assert (policy_state is None) and (policy_next_state is None)
+            n_active_envs = self._states.shape[1]
 
-        if mask is not None:
-            self._mask[i] = mask
+            self._states[i] = state[:n_active_envs]
+            self._actions[i] = action[:n_active_envs]
+            self._rewards[i] = reward[:n_active_envs]
+            self._next_states[i] = next_state[:n_active_envs]
+            self._absorbing[i] = absorbing[:n_active_envs]
+            self._last[i] = last[:n_active_envs]
+
+            if self.is_stateful:
+                self._policy_states[i] = policy_state[:n_active_envs]
+                self._policy_next_states[i] = policy_next_state[:n_active_envs]
+            else:
+                assert (policy_state is None) and (policy_next_state is None)
+
+            self._mask[i] = mask[:n_active_envs]
 
         self._len += 1
 

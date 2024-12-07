@@ -123,12 +123,12 @@ class VectorCore(object):
             if self._core_logic.fit_required():
                 fit_dataset = dataset.flatten(self._core_logic.n_steps_per_fit)
                 self.agent.fit(fit_dataset)
-                last = self._core_logic.after_fit_vectorized(last)
 
                 for c in self.callbacks_fit:
                     c(dataset)
 
-                dataset.clear(self._core_logic.n_steps_per_fit)
+                n_carry_forward_steps = dataset.clear(self._core_logic.n_steps_per_fit)
+                last = self._core_logic.after_fit_vectorized(last, n_carry_forward_steps)
 
         self.agent.stop()
         self.env.stop()
