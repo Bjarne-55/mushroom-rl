@@ -71,9 +71,9 @@ class CoreLogic(object):
             self._current_episodes_counter += 1
             self._episodes_progress_bar.update(1)
 
-    def after_fit(self):
+    def after_fit(self, n_carry_forward_steps=0):
         self._current_episodes_counter = 0
-        self._current_steps_counter = 0
+        self._current_steps_counter = n_carry_forward_steps
 
     def terminate_run(self):
         self._steps_progress_bar.close()
