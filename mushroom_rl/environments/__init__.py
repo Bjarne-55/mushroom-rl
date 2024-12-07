@@ -1,3 +1,4 @@
+"""
 try:
     Atari = None
     from .atari import Atari
@@ -61,7 +62,8 @@ try:
     from .mujoco_envs import *
 except ImportError:
     pass
-
+"""
+    
 try:
     OmniIsaacGymEnv = None
     from .omni_isaac_gym_env import OmniIsaacGymEnv

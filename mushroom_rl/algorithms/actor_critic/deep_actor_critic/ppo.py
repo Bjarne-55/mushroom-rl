@@ -83,13 +83,14 @@ class PPO(OnPolicyDeepAC):
 
         old_pol_dist = self.policy.distribution_t(state_old)
         old_log_p = old_pol_dist.log_prob(action)[:, None].detach()
+        #self.old_old_log_min = old_log_p.min()
 
         self._V.fit(state, v_target, **self._critic_fit_params)
 
         self._update_policy(state, action, adv, old_log_p)
 
         # Print fit information
-        self._log_info(dataset, state, v_target, old_pol_dist)
+        self._log_info(dataset, state, v_target, old_pol_dist, old_log_p, (state - next_state).mean())
         self._iter += 1
 
     def _update_policy(self, obs, act, adv, old_log_p):
@@ -104,7 +105,7 @@ class PPO(OnPolicyDeepAC):
                 loss.backward()
                 self._optimizer.step()
 
-    def _log_info(self, dataset, x, v_target, old_pol_dist):
+    def _log_info(self, dataset, x, v_target, old_pol_dist, old_log_p, diff):
         if self._logger:
             with torch.no_grad():
                 logging_verr = []
@@ -116,9 +117,9 @@ class PPO(OnPolicyDeepAC):
                 logging_ent = self.policy.entropy(x)
                 new_pol_dist = self.policy.distribution(x)
                 logging_kl = torch.mean(torch.distributions.kl.kl_divergence(new_pol_dist, old_pol_dist))
-                avg_rwd = np.mean(dataset.undiscounted_return)
-                msg = "Iteration {}:\n\t\t\t\trewards {} vf_loss {}\n\t\t\t\tentropy {}  kl {}".format(
-                    self._iter, avg_rwd, logging_verr, logging_ent, logging_kl)
+                avg_rwd = torch.mean(dataset.undiscounted_return)
+                msg = "Iteration {}:\n\t\t\t\trewards {} vf_loss {}\n\t\t\t\tentropy {}  kl {}\n\t\t\t\t v_target {} old_log_p {} \n\t\t\t\t state_diff {}".format(
+                    self._iter, avg_rwd, logging_verr, logging_ent, logging_kl, v_target.max(), old_log_p.min(), diff)
 
                 self._logger.info(msg)
                 self._logger.weak_line()

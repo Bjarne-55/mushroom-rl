@@ -101,10 +101,9 @@ class IsaacA1Description(IsaacSim):
         return roll, pitch, yaw
 
     def setup(self, env_indices, obs):
-        return
         joints_defaults = self._task.robots.get_joints_default_state()
         dof_pos = joints_defaults.positions[env_indices]
-        dof_pos += (torch.rand(dof_pos.shape, device=self._device)) / 3.0
+        dof_pos += (torch.rand(dof_pos.shape, device=self._device)) - 0.5
         self._task.robots.set_joint_positions(dof_pos, indices=env_indices)
 
     def _preprocess_action(self, action):

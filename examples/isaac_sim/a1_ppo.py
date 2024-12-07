@@ -50,7 +50,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = IsaacA1Description(64, 200, True)
+    mdp = IsaacA1Description(128, 200, True)
     mdp.seed(0)#Episode 16; 57%
     torch.manual_seed(0)
     random.seed(0)
@@ -60,7 +60,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
                          optimizer={'class': optim.Adam,
                                     'params': {'lr': 3e-4}},
                          loss=F.mse_loss,
-                         n_features=256,
+                         n_features=32,
                          batch_size=64,
                          use_cuda=True,
                          input_shape=mdp.info.observation_space.shape,
@@ -74,7 +74,6 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
     alg_params['critic_params'] = critic_params
 
     agent = alg(mdp.info, policy, **alg_params)
-    agent.load("stored_agents/a1_ppo/1732168213.793614.zip")
     #agent.set_logger(logger)
 
     core = VectorCore(agent, mdp)
@@ -88,7 +87,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
     logger.epoch_info(0, J=J, R=R, entropy=E)
 
     for it in trange(n_epochs, leave=False):
-        #core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
+        core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
         dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
 
         J = torch.mean(dataset.discounted_return).item()
@@ -100,7 +99,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
     #logger.info('Press a button to visualize')
     #input()
     core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
-    #agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip")
+    agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
 
 
 if __name__ == '__main__':
@@ -115,7 +114,7 @@ if __name__ == '__main__':
     )
     policy_params = dict(
         std_0=1.,
-        n_features=256,
+        n_features=32,
         use_cuda=True
 
     )

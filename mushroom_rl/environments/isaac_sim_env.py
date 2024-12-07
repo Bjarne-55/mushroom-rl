@@ -81,10 +81,11 @@ class IsaacSim(VectorizedEnvironment):
             stage_units_in_meters=1.0,
             rendering_dt=1.0 / 60.0,
             backend=self._backend,
-            device=self._device
+            device="cuda:0"
         )
         self._physics_context = self._world.get_physics_context()
-        self._physics_context.set_gpu_found_lost_aggregate_pairs_capacity(2 * 1024)
+        self._physics_context.set_gpu_found_lost_aggregate_pairs_capacity(32 * 1024)
+        self._physics_context.set_gpu_total_aggregate_pairs_capacity(8*1024)
 
         if timestep is None:
             self._timestep = self._world.get_physics_dt()
@@ -124,7 +125,7 @@ class IsaacSim(VectorizedEnvironment):
 
         self._task = IsaacSimTask(self._physics_context, usd_path, n_envs, env_spacing, 
                                   collision_between_envs, observation_spec, action_spec, additional_data_spec, 
-                                  collision_groups, self._backend, self._action_type)
+                                  collision_groups, self._backend, self._action_type, self._n_intermediate_steps, self._device)
         self._world.add_task(self._task)
 
     def render_all(self, env_mask, record=False):#TODO add recording
@@ -140,7 +141,6 @@ class IsaacSim(VectorizedEnvironment):
 
     def step_all(self, env_mask, action):#TODO intermediate and substeps
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
-        self._task.collision_helper.clear()
 
         cur_obs = self._obs.clone().detach()
 
@@ -154,9 +154,12 @@ class IsaacSim(VectorizedEnvironment):
             if self._recompute_action_per_step or ctrl_action is None:
                 ctrl_action = self._compute_action(cur_obs, action)
 
+            self._simulation_pre_step()
+
             self._task.apply_action(ctrl_action[env_indices], env_indices)
             self._world.step(render=not self._headless)
-            self._task.collision_helper.gather_collisions()
+
+            self._simulation_post_step()
 
             if self._recompute_action_per_step:
                 cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
@@ -284,7 +287,7 @@ class IsaacSim(VectorizedEnvironment):
         """
         raise NotImplementedError
     
-    def _check_collision(self, group1, group2):
+    def _check_collision(self, group1, group2, threshold=0., selector=None):
         """
         Check for collision between the specified groups.
 
@@ -299,9 +302,12 @@ class IsaacSim(VectorizedEnvironment):
             groups or not.
 
         """
-        return self._task.collision_helper.check_collision(group1, group2)
+        if selector:
+            return self._task.collision_helper.check_collision(group1, group2, threshold, selector=selector)
+        else:
+            return self._task.collision_helper.check_collision(group1, group2, threshold)
 
-    def _get_collision_force(self, group1, group2):
+    def _get_collision_force(self, group1, group2, selector=None):
         """
         Returns the collision force and torques between the specified groups.
 
@@ -314,10 +320,16 @@ class IsaacSim(VectorizedEnvironment):
         Returns:
             A 3D vector specifying the collision forces
         """
-        return self._task.collision_helper.get_collision_force(group1, group2)
+        if selector:
+            return self._task.collision_helper.get_collision_force(group1, group2, selector)
+        else:
+            return self._task.collision_helper.get_collision_force(group1, group2)
     
-    def _get_collision_count(self, group1, group2):
-        return self._task.collision_helper.get_collision_count(group1, group2)
+    def _get_collision_count(self, group1, group2, threshold=0., selector=None):
+        if selector:
+            return self._task.collision_helper.count_collisions(group1, group2, threshold, selector=selector)
+        else:
+            return self._task.collision_helper.count_collisions(group1, group2, threshold)
     
     def _read_data(self, name, env_indices=None):
         return self._task.read_data(name, env_indices)
@@ -369,3 +381,26 @@ class IsaacSim(VectorizedEnvironment):
 
         """
         return {}
+    
+    def _simulation_pre_step(self):
+        """
+        Allows information to be accesed and changed at every intermediate step
+        before taking a step in the mujoco simulation.
+        Can be usefull to apply an external force/torque to the specified bodies.
+
+        ex: apply a force over X to the torso:
+        force = [200, 0, 0]
+        torque = [0, 0, 0]
+        self.sim.data.xfrc_applied[self.sim.model._body_name2id["torso"],:] = force + torque
+
+        """
+        pass
+
+    def _simulation_post_step(self):
+        """
+        Allows information to be accesed at every intermediate step
+        after taking a step in the mujoco simulation.
+        Can be usefull to average forces over all intermediate steps.
+
+        """
+        pass

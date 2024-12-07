@@ -8,8 +8,9 @@ class ObservationType(Enum):
     BODY_ROT = (1, 'body', 4)
     BODY_LIN_VEL = (2, 'body', 3)
     BODY_ANG_VEL = (3, 'body', 3)
-    JOINT_POS = (4, 'joint', 1)
-    JOINT_VEL = (5, 'joint', 1)
+    BODY_VEL = (4, 'body', 6) #combination of lin_vel and ang_vel
+    JOINT_POS = (5, 'joint', 1)
+    JOINT_VEL = (7, 'joint', 1)
 
     def __init__(self, id, category, length):
         self.category = category
@@ -42,7 +43,6 @@ class ObservationHelper:
             if name in data:
                 obs[:, indices] = data[name]
 
-            
         return obs
 
     def get_from_obs(self, obs, name):

@@ -25,7 +25,7 @@ class IsaacSimTask(BaseTask):
     ZERO_ENV_PATH = TEMPLATE_ENV_PATH + "_0"
 
     def __init__(self, physic_context, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, 
-                 action_spec, additional_data_spec, collision_groups, backend, action_type):
+                 action_spec, additional_data_spec, collision_groups, backend, action_type, intermediate_steps, device):
         self.usd_path = usd_path
         self._physic_context = physic_context
         self._num_envs = num_envs
@@ -37,12 +37,13 @@ class IsaacSimTask(BaseTask):
         self._backend = backend
         self._action_type = action_type
 
-        self.collision_helper = CollisionHelper(collision_groups, backend, num_envs)
+        self.collision_helper = CollisionHelper(collision_groups, backend, num_envs, device)
 
         super().__init__("CustomNameTask")#TODO
     
     def set_up_scene(self, scene):
         super().set_up_scene(scene)
+        self._views = {}
 
         scene.add_default_ground_plane()
 
@@ -77,10 +78,11 @@ class IsaacSimTask(BaseTask):
             reset_xform_properties=False
         )
         scene.add(self.robots)
+        self._views[""] = self.robots
         
         #register view
-        self._views = {}
-
+        self.collision_helper.set_up(scene, stage)
+        """
         for key, group in self.collision_helper.collision_groups.items():
             for path in group:
                 if path.startswith("/World/"):
@@ -89,7 +91,7 @@ class IsaacSimTask(BaseTask):
                     prim_path = self.TEMPLATE_ENV_PATH + "_" + str(i) + "/Robot" + path
                     prim = stage.GetPrimAtPath(prim_path)
                     contactReportAPI = PhysxSchema.PhysxContactReportAPI.Apply(prim)
-                    contactReportAPI.CreateThresholdAttr().Set(0.1)
+                    contactReportAPI.CreateThresholdAttr().Set(1)
 
                 view = RigidPrimView(
                     prim_paths_expr= self.BASE_ENV_PATH + "/.*/Robot" + path,
@@ -99,6 +101,7 @@ class IsaacSimTask(BaseTask):
                 )
                 scene.add(view)
                 self._views[path] = view
+        """
 
         if self._additional_data_spec is None:
             specifications = self._observation_spec 
@@ -117,7 +120,7 @@ class IsaacSimTask(BaseTask):
     
     def get_observations(self, clone=True):
         obs = {}
-        for name, view, obs_type, joint_index in self._observers:
+        for name, (view, obs_type, joint_index) in self._observers.items():
             obs[name] = self._read_property(view, obs_type, joint_indices=joint_index, clone=clone)
         return obs
     
@@ -131,7 +134,7 @@ class IsaacSimTask(BaseTask):
         obs_high = []
         obs = self.get_observations()
 
-        for name, _, obs_type, joint_index in self._observers:
+        for name, (_, obs_type, joint_index) in self._observers.items():
             obs_count = ArrayBackend.get_array_backend(self._backend).size(obs[name][0, ...])
 
             if obs_type == ObservationType.JOINT_POS:
@@ -215,7 +218,7 @@ class IsaacSimTask(BaseTask):
         #v = torch.ones((self._num_envs, len(self._controlled_joints))) * 7.
         #self.robots.set_max_efforts(v)
 
-        self._observers = []
+        self._observers = {}
         for name, path, obs_type in self._observation_spec:
             if obs_type.is_joint():
                 view = self.robots
@@ -226,7 +229,7 @@ class IsaacSimTask(BaseTask):
                 view = self._views[path]
                 joint_index = None
 
-            self._observers.append((name, view, obs_type, joint_index))
+            self._observers[name] = (view, obs_type, joint_index)
 
         self._additionals = {}
         for name, path, obs_type in self._additional_data_spec:
@@ -259,6 +262,8 @@ class IsaacSimTask(BaseTask):
             view.set_joint_positions(value, indices=env_indices, joint_indices=joint_indices)
         elif obs_type == ObservationType.JOINT_VEL:
             view.set_joint_velocities(value, indices=env_indices, joint_indices=joint_indices)
+        elif obs_type == ObservationType.BODY_VEL:
+            view.set_velocities(value, indices=env_indices)
 
     def _read_property(self, view, obs_type, joint_indices=None, env_indices=None, clone=True):
         if obs_type == ObservationType.BODY_POS:
@@ -273,13 +278,21 @@ class IsaacSimTask(BaseTask):
             return view.get_joint_positions(indices=env_indices, joint_indices=joint_indices, clone=clone)
         elif obs_type == ObservationType.JOINT_VEL:
             return view.get_joint_velocities(indices=env_indices, joint_indices=joint_indices, clone=clone)
+        elif obs_type == ObservationType.BODY_VEL:
+            view.get_velocities(indices=env_indices, clone=clone)
 
     def write_data(self, name, value, env_indices=None):
-        view, obs_type, joint_index = self._additionals[name]
+        if name in self._additionals:
+            view, obs_type, joint_index = self._additionals[name]
+        else:
+            view, obs_type, joint_index = self._observers[name]
         self._set_property(view, obs_type, value, joint_indices=joint_index, env_indices=env_indices)
 
     def read_data(self, name, env_indices=None):
-        view, obs_type, joint_index = self._additionals[name]
+        if name in self._additionals:
+            view, obs_type, joint_index = self._additionals[name]
+        else:
+            view, obs_type, joint_index = self._observers[name]
         return self._read_property(view, obs_type, joint_indices=joint_index, env_indices=env_indices)
     
     def set_joint_data(self, value, type, joint_indices=None, env_indices=None):

@@ -51,10 +51,10 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
     mdp = IsaacA1Description(64, 200, True)
-    torch.manual_seed(1)
-    random.seed(1)
-    np.random.seed(1)
-    mdp.seed(1)
+    torch.manual_seed(2)
+    random.seed(2)
+    np.random.seed(2)
+    mdp.seed(2)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
@@ -78,7 +78,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
 
     core = VectorCore(agent, mdp)
 
-    dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
+    dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
 
     J = torch.mean(dataset.discounted_return).item()
     R = torch.mean(dataset.undiscounted_return).item()
@@ -88,7 +88,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
-        dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
+        dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
 
         J = torch.mean(dataset.discounted_return).item()
         R = torch.mean(dataset.undiscounted_return).item()
@@ -98,8 +98,8 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
 
     #logger.info('Press a button to visualize')
     #input()
-    core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
-    agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip")
+    core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
+    agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
 
 
 if __name__ == '__main__':
