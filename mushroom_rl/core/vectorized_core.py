@@ -64,7 +64,7 @@ class VectorCore(object):
         self._core_logic.initialize_learn(n_steps_per_fit, n_episodes_per_fit)
 
         dataset = VectorizedDataset.generate(self.env.info, self.agent.info,
-                                             n_steps_per_fit, n_episodes_per_fit, self.env.number)
+                                             n_steps_per_fit, n_episodes_per_fit, self.env.number, n_episodes is not None)
 
         self._run(dataset, n_steps, n_episodes, render, quiet, record)
 
@@ -93,7 +93,7 @@ class VectorCore(object):
 
         n_episodes_dataset = len(initial_states) if initial_states is not None else n_episodes
         dataset = VectorizedDataset.generate(self.env.info, self.agent.info,
-                                             n_steps, n_episodes_dataset, self.env.number)
+                                             n_steps, n_episodes_dataset, self.env.number, n_episodes is not None)
 
         return self._run(dataset, n_steps, n_episodes, render, quiet, record, initial_states)
 

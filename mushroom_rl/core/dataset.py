@@ -76,7 +76,7 @@ class DatasetInfo(Serializable):
 
 
 class Dataset(Serializable):
-    def __init__(self, dataset_info, n_steps=None, n_episodes=None):
+    def __init__(self, dataset_info, n_steps=None, n_episodes=None, core_counts_episodes=False):
         assert (n_steps is not None and n_episodes is None) or (n_steps is None and n_episodes is not None)
 
         self._array_backend = ArrayBackend.get_array_backend(dataset_info.backend)
@@ -89,13 +89,16 @@ class Dataset(Serializable):
 
             n_samples = horizon * n_episodes
 
-        if dataset_info.n_envs == 1:#TODO here is an error for evaluation
+        if dataset_info.n_envs == 1:
             base_shape = (n_samples,)
             mask_shape = None
         elif n_episodes:
             horizon = dataset_info.horizon
             x = math.ceil(n_episodes / dataset_info.n_envs)
             base_shape = (x * horizon, min(n_episodes, dataset_info.n_envs))
+            mask_shape = base_shape
+        elif core_counts_episodes:
+            base_shape = (math.ceil(n_samples / dataset_info.n_envs) + 1 + dataset_info.horizon, dataset_info.n_envs)
             mask_shape = base_shape
         else:
             base_shape = (math.ceil(n_samples / dataset_info.n_envs) + 1, dataset_info.n_envs)
@@ -133,10 +136,10 @@ class Dataset(Serializable):
         self._add_all_save_attr()
 
     @classmethod
-    def generate(cls, mdp_info, agent_info, n_steps=None, n_episodes=None, n_envs=1):
+    def generate(cls, mdp_info, agent_info, n_steps=None, n_episodes=None, n_envs=1, core_counts_episodes=False):
         dataset_info = DatasetInfo.create_dataset_info(mdp_info, agent_info, n_envs)
 
-        return cls(dataset_info, n_steps, n_episodes)
+        return cls(dataset_info, n_steps, n_episodes, core_counts_episodes)
 
     @classmethod
     def create_raw_instance(cls, dataset=None):
@@ -548,8 +551,8 @@ class Dataset(Serializable):
 
 
 class VectorizedDataset(Dataset):
-    def __init__(self, dataset_info, n_steps=None, n_episodes=None):
-        super().__init__(dataset_info, n_steps, n_episodes)
+    def __init__(self, dataset_info, n_steps=None, n_episodes=None, core_counts_episodes=False):
+        super().__init__(dataset_info, n_steps, n_episodes, core_counts_episodes)
 
         self._initialize_theta_list(self._dataset_info.n_envs)
 
@@ -565,7 +568,7 @@ class VectorizedDataset(Dataset):
             if mask[i]:
                 self._theta_list[i].append(theta[i])
 
-    def clear(self, n_steps_per_fit=None):#TODO Problem 2 datasets exists at the same time, why even copy?
+    def clear(self, n_steps_per_fit=None):
         n_envs = len(self._theta_list)
         n_carry_forward_steps = 0
 
@@ -580,13 +583,15 @@ class VectorizedDataset(Dataset):
                 residual_data = self._data.get_view(view_size, copy=True)
                 mask = residual_data.mask
                 original_shape = mask.shape
-                mask.flatten()[n_extra_steps:] = False
+                mask = mask.flatten()
+                true_indices = self._array_backend.where(mask)[0]
+                mask[true_indices[n_extra_steps:]] = False
                 residual_data.mask = mask.reshape(original_shape)
 
                 residual_info = self._info.get_view(view_size, copy=True)
                 residual_episode_info = self._episode_info.get_view(view_size, copy=True)
 
-                n_carry_forward_steps = n_extra_steps
+                n_carry_forward_steps = mask.sum()
 
         super().clear()
         self._initialize_theta_list(n_envs)
