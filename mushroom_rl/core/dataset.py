@@ -1,5 +1,4 @@
 import numpy as np
-import math
 
 from collections import defaultdict
 
@@ -89,16 +88,11 @@ class Dataset(Serializable):
 
             n_samples = horizon * n_episodes
 
-        if dataset_info.n_envs == 1:#TODO here is an error for evaluation
+        if dataset_info.n_envs == 1:
             base_shape = (n_samples,)
             mask_shape = None
-        elif n_episodes:
-            horizon = dataset_info.horizon
-            x = math.ceil(n_episodes / dataset_info.n_envs)
-            base_shape = (x * horizon, min(n_episodes, dataset_info.n_envs))
-            mask_shape = base_shape
         else:
-            base_shape = (math.ceil(n_samples / dataset_info.n_envs) + 1, dataset_info.n_envs)
+            base_shape = (n_samples, dataset_info.n_envs)
             mask_shape = base_shape
 
         state_shape = base_shape + dataset_info.state_shape
@@ -110,8 +104,8 @@ class Dataset(Serializable):
         else:
             policy_state_shape = None
 
-        self._info = ExtraInfo(min(n_episodes, dataset_info.n_envs) if n_episodes else dataset_info.n_envs, dataset_info.backend, dataset_info.device)
-        self._episode_info = ExtraInfo(min(n_episodes, dataset_info.n_envs) if n_episodes else dataset_info.n_envs, dataset_info.backend, dataset_info.device)
+        self._info = ExtraInfo(dataset_info.n_envs, dataset_info.backend, dataset_info.device)
+        self._episode_info = ExtraInfo(dataset_info.n_envs, dataset_info.backend, dataset_info.device)
         self._theta_list = list()
 
         if dataset_info.backend == 'numpy':
@@ -565,9 +559,8 @@ class VectorizedDataset(Dataset):
             if mask[i]:
                 self._theta_list[i].append(theta[i])
 
-    def clear(self, n_steps_per_fit=None):#TODO Problem 2 datasets exists at the same time, why even copy?
+    def clear(self, n_steps_per_fit=None):
         n_envs = len(self._theta_list)
-        n_carry_forward_steps = 0
 
         residual_data = None
         if n_steps_per_fit is not None:
@@ -586,8 +579,6 @@ class VectorizedDataset(Dataset):
                 residual_info = self._info.get_view(view_size, copy=True)
                 residual_episode_info = self._episode_info.get_view(view_size, copy=True)
 
-                n_carry_forward_steps = n_extra_steps
-
         super().clear()
         self._initialize_theta_list(n_envs)
 
@@ -595,8 +586,6 @@ class VectorizedDataset(Dataset):
             self._data = residual_data
             self._info = residual_info
             self._episode_info = residual_episode_info
-
-        return n_carry_forward_steps
 
     def flatten(self, n_steps_per_fit=None):
         if len(self) == 0:
