@@ -16,7 +16,7 @@ class IsaacA1Description(IsaacSim):
         backend="torch"
         device="cuda:0"
 
-        usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/actual_legged_gym/a1/a1.usd"
+        usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/a1_legged_instanceable_effort/a1/a1.usd"
 
         self._action_spec = [
             "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint", 
@@ -77,7 +77,8 @@ class IsaacA1Description(IsaacSim):
         env_spacing = 3.
         super().__init__(usd_path, self._action_spec, observation_spec, backend, device, collision_between_envs, num_envs, 
                          env_spacing, 0.99, horizon, additional_data_spec=additional_data_spec, collision_groups=collision_groups, 
-                         action_type=ActionType.EFFORT, headless=headless, n_substeps=1, n_intermediate_steps=4,  timestep=0.005) 
+                         action_type=ActionType.EFFORT, headless=headless, n_intermediate_steps=4, timestep=0.005) 
+        self._mdp_info.action_space = Box(*self._task.get_joint_pos_limits()*4.5)
         
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)
         self.observation_helper.add_obs("commands", 3, -1, 1)
@@ -102,6 +103,8 @@ class IsaacA1Description(IsaacSim):
         self.last_contacts = torch.zeros((num_envs, 4), device=device, dtype=torch.bool)
 
         self.forward_vec = torch.tensor([1., 0., 0.], device=device).repeat((num_envs, 1))
+
+        self._effort_limit = self._task.get_joint_max_efforts()
     
     def _get_obs_normilization_vec(self):
         v = torch.zeros((self.observation_helper.obs_length), device=self._device)
@@ -158,7 +161,7 @@ class IsaacA1Description(IsaacSim):
         return dof_pos_limits
 
     def is_absorbing(self, obs):
-        fallen = self._check_collision("body", "groundplane", 1.)
+        fallen = self._check_collision("body", "groundplane", 0.)
         return fallen
     
     def setup(self, env_indices, obs):
@@ -169,7 +172,7 @@ class IsaacA1Description(IsaacSim):
 
         self._actions[env_indices] = 0
 
-        dof_pos = self._default_joint_angles * (torch.rand((len(env_indices), len(self._action_spec)), device=self._device) + 0.5)
+        dof_pos = self._default_joint_angles * torch_rand_float(0.5, 1.5, (len(env_indices), 12), device=self._device)
         dof_vel = torch.zeros((len(env_indices), len(self._action_spec)), device=self._device)
 
         self._set_joint_data(dof_pos, ObservationType.JOINT_POS, env_indices=env_indices)
@@ -270,7 +273,7 @@ class IsaacA1Description(IsaacSim):
     def _compute_torque(self, action, joint_vels, joint_pos):
         actions_scaled = action * 0.25
         self._torques = 20.0 * (actions_scaled + self._default_joint_angles - joint_pos) - 0.5*joint_vels
-        self._torques = torch.clip(self._torques, self.info.action_space.low, self.info.action_space.high)
+        self._torques = torch.clip(self._torques, -self._effort_limit, self._effort_limit)
         
         return self._torques
     
@@ -353,13 +356,9 @@ class IsaacA1Description(IsaacSim):
 
     def _reward_feet_air_time(self):
         # Reward long steps
-        # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
         contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
         for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
             contact[:, i] = self._check_collision(foot, "groundplane", 1., lambda x: torch.max(x[:, :, 2], dim=1).values)
-        #for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
-        #    collision_force = self._get_collision_force(foot, "groundplane")[:, :, 2].amax(dim=1)
-        #    contact[:, i] = collision_force > 1.
         contact_filt = torch.logical_or(contact, self.last_contacts) 
         self.last_contacts = contact
         first_contact = (self.feet_air_time > 0.) * contact_filt

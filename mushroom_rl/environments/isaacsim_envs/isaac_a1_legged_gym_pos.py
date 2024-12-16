@@ -16,7 +16,7 @@ class IsaacA1Description(IsaacSim):
         backend="torch"
         device="cuda:0"
 
-        usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/a1_legged_pos/a1/a1.usd"
+        usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/a1_leggedgym_instance_pos/a1/a1.usd"
 
         self._action_spec = [
             "FL_hip_joint", "FL_thigh_joint", "FL_calf_joint", 
@@ -77,7 +77,7 @@ class IsaacA1Description(IsaacSim):
         env_spacing = 3.
         super().__init__(usd_path, self._action_spec, observation_spec, backend, device, collision_between_envs, num_envs, 
                          env_spacing, 0.99, horizon, additional_data_spec=additional_data_spec, collision_groups=collision_groups, 
-                         action_type=ActionType.POSITION, headless=headless, n_substeps=1, n_intermediate_steps=1,  timestep=0.02) 
+                         action_type=ActionType.POSITION, headless=headless, n_substeps=1, n_intermediate_steps=1, timestep=0.02) 
         
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)
         self.observation_helper.add_obs("commands", 3, -1, 1)

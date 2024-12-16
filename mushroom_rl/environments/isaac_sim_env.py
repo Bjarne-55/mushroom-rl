@@ -43,6 +43,8 @@ class IsaacSim(VectorizedEnvironment):
         self._simulation_app = SimulationApp({"headless": headless, "hide_ui": False}) 
         self._viewer = None
 
+        self._apply_carb_settings()
+
         self._backend = backend
         self._device = device
         TorchUtils.set_default_device(device)
@@ -75,17 +77,28 @@ class IsaacSim(VectorizedEnvironment):
         
         super().__init__(mdp_info, n_envs)
 
+    def _apply_carb_settings(self):
+        import carb
+        carb.settings.get_settings().set("/persistent/omnihydra/useSceneGraphInstancing", True)
+        carb.settings.get_settings().set_bool("/physics/physxDispatcher", True)
+        # Force the background grid off all the time for RL tasks, to avoid the grid showing up in any RL camera task
+        carb.settings.get_settings().set("/app/viewport/grid/enabled", False)
+        # Disable framerate limiting which might cause rendering slowdowns
+        carb.settings.get_settings().set("/app/runLoops/main/rateLimitEnabled", False)
+
     def _create_world(self, timestep):
         from omni.isaac.core.world import World
         self._world = World(
             stage_units_in_meters=1.0,
             rendering_dt=1.0 / 60.0,
-            backend=self._backend,
-            device="cuda:0"
+            backend="torch",
+            device="cuda:0",
+            sim_params={'gravity': [0.0, 0.0, -9.81], 'use_gpu_pipeline': True, 'use_fabric': True, 'enable_scene_query_support': True, 'use_gpu': True}
         )
         self._physics_context = self._world.get_physics_context()
         self._physics_context.set_gpu_found_lost_aggregate_pairs_capacity(32 * 1024)
         self._physics_context.set_gpu_total_aggregate_pairs_capacity(8*1024)
+        self._physics_context.enable_gpu_dynamics(True)
 
         if timestep is None:
             self._timestep = self._world.get_physics_dt()
@@ -93,6 +106,8 @@ class IsaacSim(VectorizedEnvironment):
         else:
             self._physics_context.set_physics_dt(dt=timestep, substeps=self._n_substeps)
             self._timestep = timestep
+        self._world.set_simulation_dt(rendering_dt=self.dt)
+        print(f"rendering dt: {self._world.get_rendering_dt()}, physix dt: {self._world.get_physics_dt()}")
 
     def _set_camera(self):
         from omni.kit.viewport.utility import get_viewport_from_window_name
@@ -162,11 +177,11 @@ class IsaacSim(VectorizedEnvironment):
             self._simulation_post_step()
 
             if self._recompute_action_per_step:
-                cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
+                cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
                 cur_obs = self._create_observation(cur_obs)
 
         if not self._recompute_action_per_step:
-            cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
+            cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
             cur_obs = self._create_observation(cur_obs)
 
         absorbing = self.is_absorbing(cur_obs)
@@ -186,7 +201,7 @@ class IsaacSim(VectorizedEnvironment):
         self._task.reset_env(env_indices, state)
         self.setup(env_indices, state)
         
-        obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
+        obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
         obs = self._create_observation(obs)
         self._obs = obs.clone().detach()
 
@@ -222,14 +237,13 @@ class IsaacSim(VectorizedEnvironment):
             self._viewer.close()
             self._viewer = None
         self._world.reset()
-        print("reset")
 
     def __del__(self):
         if self._viewer is not None:
             self._viewer.close()
             self._viewer = None
         self._simulation_app.close()
-    
+
     @property
     def dt(self):
         return self._timestep * self._n_intermediate_steps * self._n_substeps

@@ -13,7 +13,7 @@ from mushroom_rl.core import VectorCore, Logger
 from mushroom_rl.algorithms.actor_critic import TRPO, PPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
-from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
+from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym_pos import IsaacA1Description
 from mushroom_rl.utils import TorchUtils
 
 
@@ -78,18 +78,18 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
 
     core = VectorCore(agent, mdp)
 
-    #dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
+    dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
 
-    #J = torch.mean(dataset.discounted_return).item()
-    #R = torch.mean(dataset.undiscounted_return).item()
-    #E = agent.policy.entropy().item()
+    J = torch.mean(dataset.discounted_return).item()
+    R = torch.mean(dataset.undiscounted_return).item()
+    E = agent.policy.entropy().item()
 
-    #logger.epoch_info(0, J=J, R=R, entropy=E)
+    logger.epoch_info(0, J=J, R=R, entropy=E)
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
         dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
-        #agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
+        agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
 
         J = torch.mean(dataset.discounted_return).item()
         R = torch.mean(dataset.undiscounted_return).item()
@@ -119,6 +119,6 @@ if __name__ == '__main__':
         use_cuda=True,
         ent_coeff=0.01
     )
-    num_envs = 4096
-    experiment(alg=PPO, num_envs=num_envs, n_epochs=80, n_steps=1000000, n_steps_per_fit=4096*24 + 4095,
+    num_envs = 2048
+    experiment(alg=PPO, num_envs=num_envs, n_epochs=30, n_steps=4096*24*50, n_steps_per_fit=4096*24,
                    n_episodes_test=num_envs, alg_params=ppo_params, policy_params=policy_params)

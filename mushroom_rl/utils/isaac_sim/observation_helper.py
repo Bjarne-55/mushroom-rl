@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 from enum import Enum
 from mushroom_rl.core.array_backend import ArrayBackend
 
@@ -79,6 +80,7 @@ class ObservationHelper:
         for name, _, obs_type in self._observation_spec:
             mapping[name] = list(range(index, index + obs_type.length))
             index += obs_type.length
+        mapping = {key: torch.tensor(value, device=self._device) for key, value in mapping.items()}
         return mapping
     
     def _compute_type_idx_map(self):
@@ -89,6 +91,7 @@ class ObservationHelper:
             for name in names:
                 indices.extend(self.obs_idx_map[name])
             mapping[obs_type] = indices
+        mapping = {key: torch.tensor(value, device=self._device) for key, value in mapping.items()}
         return mapping
 
     @property

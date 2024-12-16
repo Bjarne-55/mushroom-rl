@@ -1,8 +1,8 @@
 import numpy as np
 import torch
-
+import hydra
 from omni.isaac.core.tasks import BaseTask
-from omni.isaac.core.utils.stage import add_reference_to_stage
+from omni.isaac.core.utils.stage import add_reference_to_stage, print_stage_prim_paths
 from omni.isaac.core.articulations import ArticulationView
 from omni.isaac.cloner import GridCloner
 from omni.usd import get_context
@@ -18,6 +18,7 @@ from mushroom_rl.core.array_backend import ArrayBackend
 from mushroom_rl.utils import TorchUtils
 
 from omni.isaac.core.utils.types import ArticulationActions
+from omni.isaac.core.robots.robot import Robot
 
 class IsaacSimTask(BaseTask):
     BASE_ENV_PATH = "/World/envs"
@@ -35,6 +36,7 @@ class IsaacSimTask(BaseTask):
         self._action_spec = action_spec
         self._additional_data_spec = additional_data_spec
         self._backend = backend
+        self._device = device
         self._action_type = action_type
 
         self.collision_helper = CollisionHelper(collision_groups, backend, num_envs, device)
@@ -45,16 +47,16 @@ class IsaacSimTask(BaseTask):
         super().set_up_scene(scene)
         self._views = {}
 
-        scene.add_default_ground_plane()
-
         #Define env_0
         add_reference_to_stage(self.usd_path, self.ZERO_ENV_PATH + "/Robot")
-        stage = get_context().get_stage()
-        UsdGeom.Xform.Define(stage, self.ZERO_ENV_PATH)
 
         #clone env_0
         self._cloner = GridCloner(spacing=self._env_spacing)#check with automatic spacing
         self._cloner.define_base_env(self.BASE_ENV_PATH)
+
+        stage = get_context().get_stage()
+        UsdGeom.Xform.Define(stage, self.ZERO_ENV_PATH)
+
         prim_paths = self._cloner.generate_paths(self.TEMPLATE_ENV_PATH, self._num_envs)
         self.env_pos = self._cloner.clone(
             source_prim_path=self.ZERO_ENV_PATH, 
@@ -78,30 +80,13 @@ class IsaacSimTask(BaseTask):
             reset_xform_properties=False
         )
         scene.add(self.robots)
-        self._views[""] = self.robots
-        
-        #register view
-        self.collision_helper.set_up(scene, stage)
-        """
-        for key, group in self.collision_helper.collision_groups.items():
-            for path in group:
-                if path.startswith("/World/"):
-                    continue
-                for i in range(self._num_envs):
-                    prim_path = self.TEMPLATE_ENV_PATH + "_" + str(i) + "/Robot" + path
-                    prim = stage.GetPrimAtPath(prim_path)
-                    contactReportAPI = PhysxSchema.PhysxContactReportAPI.Apply(prim)
-                    contactReportAPI.CreateThresholdAttr().Set(1)
 
-                view = RigidPrimView(
-                    prim_paths_expr= self.BASE_ENV_PATH + "/.*/Robot" + path,
-                    name=path.replace("/", "_") + "_view",
-                    reset_xform_properties=False,
-                    track_contact_forces=True,
-                )
-                scene.add(view)
-                self._views[path] = view
-        """
+        scene.add_default_ground_plane()
+        
+        self._views[""] = self.robots
+
+        #register view
+        self._views.update(self.collision_helper.set_up(scene, stage))
 
         if self._additional_data_spec is None:
             specifications = self._observation_spec 
@@ -155,39 +140,26 @@ class IsaacSimTask(BaseTask):
         obs_high = ArrayBackend.get_array_backend(self._backend).concatenate(obs_high)
 
         return obs_low, obs_high
-    """
-    def get_action_limits(self):
-        limit = self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints)[0]
-        
-        for index in range(len(self._controlled_joints)):
-            if limit[index] == 0:
-                limit[index] = ArrayBackend.get_array_backend(self._backend).inf()
-
-        return -limit, limit
     
-    def get_action_limits(self):
-        limit = ArrayBackend.get_array_backend(self._backend).ones(len(self._controlled_joints))
-        return -limit, limit
-    """
+    def get_joint_max_efforts(self):
+        return self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints)[0].to(self._device)
+    
+    def get_joint_pos_limits(self):
+        return self.robots.get_dof_limits()[0].to(self._device)[self._controlled_joints].T
+    
+    def get_joint_max_velocities(self):
+        return self.robots.get_joint_max_velocities(indices=[0], joint_indices=self._controlled_joints, clone=True)[0]
 
     def get_action_limits(self):
         if self._action_type == ActionType.EFFORT:
-            limit = self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints)[0]
+            limit = self.get_joint_max_efforts()
             return -limit, limit
         elif self._action_type == ActionType.POSITION:
-            limit = self.robots.get_dof_limits()[0][self._controlled_joints].T
+            limit = self.get_joint_pos_limits()
             return limit[0], limit[1]
         else:
-            limit = self.robots.get_joint_max_velocities(indices=[0], joint_indices=self._controlled_joints, clone=True)[0]
+            limit = self.get_joint_max_velocities()
             return -limit, limit
-    
-    def get_max_actions(self):
-        if self._action_type == ActionType.EFFORT:
-            return self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints)[0]
-        elif self._action_type == ActionType.POSITION:
-            return self.robots.get_dof_limits()[0][self._controlled_joints]
-        else:
-            return self.robots.get_joint_max_velocities(indices=[0], joint_indices=self._controlled_joints, clone=True)[0]
     
     def reset_env(self, env_indices, state=None):
         joints_defaults = self.robots.get_joints_default_state()
@@ -214,9 +186,7 @@ class IsaacSimTask(BaseTask):
         for joint_name in self._action_spec:
             joint_index = self.robots.get_dof_index(joint_name)
             self._controlled_joints.append(joint_index)
-        
-        #v = torch.ones((self._num_envs, len(self._controlled_joints))) * 7.
-        #self.robots.set_max_efforts(v)
+        self._controlled_joints = torch.tensor(self._controlled_joints, device=self._device)
 
         self._observers = {}
         for name, path, obs_type in self._observation_spec:
@@ -259,8 +229,12 @@ class IsaacSimTask(BaseTask):
         elif obs_type == ObservationType.BODY_ANG_VEL:
             view.set_angular_velocities(value, indices=env_indices)
         elif obs_type == ObservationType.JOINT_POS:
+            if joint_indices is None:
+                joint_indices = self._controlled_joints
             view.set_joint_positions(value, indices=env_indices, joint_indices=joint_indices)
         elif obs_type == ObservationType.JOINT_VEL:
+            if joint_indices is None:
+                joint_indices = self._controlled_joints
             view.set_joint_velocities(value, indices=env_indices, joint_indices=joint_indices)
         elif obs_type == ObservationType.BODY_VEL:
             view.set_velocities(value, indices=env_indices)
@@ -275,8 +249,12 @@ class IsaacSimTask(BaseTask):
         elif obs_type == ObservationType.BODY_ANG_VEL:
             return view.get_velocities(indices=env_indices, clone=clone)[:, 3:]
         elif obs_type == ObservationType.JOINT_POS:
+            if joint_indices is None:
+                joint_indices = self._controlled_joints
             return view.get_joint_positions(indices=env_indices, joint_indices=joint_indices, clone=clone)
         elif obs_type == ObservationType.JOINT_VEL:
+            if joint_indices is None:
+                joint_indices = self._controlled_joints
             return view.get_joint_velocities(indices=env_indices, joint_indices=joint_indices, clone=clone)
         elif obs_type == ObservationType.BODY_VEL:
             view.get_velocities(indices=env_indices, clone=clone)
