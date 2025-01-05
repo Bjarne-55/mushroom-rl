@@ -1,4 +1,3 @@
-from enum import Enum
 import numpy as np
 import torch
 import random
@@ -9,12 +8,7 @@ from mushroom_rl.core import VectorizedEnvironment, MDPInfo, ArrayBackend
 from mushroom_rl.rl_utils.spaces import Box
 from mushroom_rl.utils import TorchUtils
 from mushroom_rl.utils.viewer import ImageViewer
-from mushroom_rl.utils.isaac_sim import ObservationHelper, ObservationType
-    
-class ActionType(Enum):
-    EFFORT = "joint_efforts"
-    POSITION = "joint_positions"
-    VELOCITY = "joint_velocities"
+from mushroom_rl.utils.isaac_sim import ObservationHelper, ObservationType, ActionType
 
 class IsaacSim(VectorizedEnvironment):
     # TODO add all relevant varibales from mujoco Constructur
@@ -26,18 +20,27 @@ class IsaacSim(VectorizedEnvironment):
         Constructor.
 
         Args:
-            usd_path (str): A string with a path to the usd file.
+            usd_path (str): Path to the USD file.
             actuation_spec (list): A list specifying the names of the joints  which should be controllable by the
                agent. Can be left empty when all actuators should be used;
             observation_spec (list): A list containing the names of data that should be made available to the agent as
                an observation and their type (ObservationType). They are combined with a key, which is used to access
                the data. An entry in the list is given by: (key, name, type). The name can later be used to retrieve
                specific observations;
-            backend (str)
-            device (str)
-            collision_between_envs (bool): Whether collisions between environments should be possible or not
-            n_envs (int): Number of parallel environments
-            env_spacing (int): Distance between environments
+            backend (str): Backend for array operations.
+            device (str): Compute device (e.g., 'cuda:0').
+            collision_between_envs (bool): Whether inter-environment collisions are allowed.
+            n_envs (int): Number of parallel environments.
+            env_spacing (float): Distance between environments.
+            gamma (float): Discount factor for RL.
+            horizon (int): Episode horizon.
+            timestep (float, optional): Simulation timestep.
+            n_substeps (int): Number of substeps per simulation step.
+            n_intermediate_steps (int): Intermediate control steps.
+            additional_data_spec (list, optional): Additional data specifications.
+            collision_groups (dict, optional): Collision groups configuration.
+            action_type (ActionType): Type of action (effort, position, velocity).
+            headless (bool): Whether to run in headless mode.
         """
         self._headless = headless
         self._simulation_app = SimulationApp({"headless": headless, "hide_ui": False}) 
@@ -50,21 +53,27 @@ class IsaacSim(VectorizedEnvironment):
         TorchUtils.set_default_device(device)
 
         self._action_type = action_type
-
         self._n_intermediate_steps = n_intermediate_steps
         self._n_substeps = n_substeps
 
-        #create world and set task
+        # Initialize world and tasks
         self._create_world(timestep)
         self._set_camera()
         self._create_light()
-        self._set_task(usd_path, n_envs, env_spacing, collision_between_envs, observation_spec, action_spec, 
-                       additional_data_spec, collision_groups)
+        self._set_task(
+            usd_path, 
+            n_envs, 
+            env_spacing, 
+            collision_between_envs, 
+            observation_spec, 
+            action_spec, 
+            additional_data_spec, 
+            collision_groups
+        )
         self._world.reset()
 
         observation_limits = self._task.get_observation_limits()
         observation_space = Box(*observation_limits)
-
         self.observation_helper = ObservationHelper(observation_spec, observation_limits, backend, n_envs, device)
 
         action_limits = self._task.get_action_limits()
@@ -78,26 +87,46 @@ class IsaacSim(VectorizedEnvironment):
         super().__init__(mdp_info, n_envs)
 
     def _apply_carb_settings(self):
+        """Apply Carb settings for optimization."""
         import carb
+
         carb.settings.get_settings().set("/persistent/omnihydra/useSceneGraphInstancing", True)
         carb.settings.get_settings().set_bool("/physics/physxDispatcher", True)
-        # Force the background grid off all the time for RL tasks, to avoid the grid showing up in any RL camera task
         carb.settings.get_settings().set("/app/viewport/grid/enabled", False)
-        # Disable framerate limiting which might cause rendering slowdowns
         carb.settings.get_settings().set("/app/runLoops/main/rateLimitEnabled", False)
 
     def _create_world(self, timestep):
+        """Create and configure the simulation world."""
         from omni.isaac.core.world import World
+
         self._world = World(
             stage_units_in_meters=1.0,
             rendering_dt=1.0 / 60.0,
             backend="torch",
             device="cuda:0",
-            sim_params={'gravity': [0.0, 0.0, -9.81], 'use_gpu_pipeline': True, 'use_fabric': True, 'enable_scene_query_support': True, 'use_gpu': True}
+            sim_params={
+                'gravity': [0.0, 0.0, -9.81], 
+                'use_gpu_pipeline': True, 
+                'use_fabric': True, 
+                'enable_scene_query_support': True, 
+                'use_gpu': True}
         )
         self._physics_context = self._world.get_physics_context()
         self._physics_context.set_gpu_found_lost_aggregate_pairs_capacity(32 * 1024)
         self._physics_context.set_gpu_total_aggregate_pairs_capacity(8*1024)
+        self._physics_context.set_gpu_temp_buffer_capacity(16777216)
+
+        self._physics_context.set_gpu_max_rigid_contact_count(524288)
+        self._physics_context.set_gpu_max_rigid_patch_count(81920)
+        self._physics_context.set_gpu_found_lost_pairs_capacity(8192)
+        self._physics_context.set_gpu_found_lost_aggregate_pairs_capacity(262144)
+        self._physics_context.set_gpu_total_aggregate_pairs_capacity(8192)
+        self._physics_context.set_gpu_max_soft_body_contacts(1048576)
+        self._physics_context.set_gpu_max_particle_contacts(1048576)
+        self._physics_context.set_gpu_heap_capacity(67108864)
+        self._physics_context.set_gpu_temp_buffer_capacity(16777216)
+        self._physics_context.set_gpu_max_num_partitions(8)
+
         self._physics_context.enable_gpu_dynamics(True)
 
         if timestep is None:
@@ -106,44 +135,52 @@ class IsaacSim(VectorizedEnvironment):
         else:
             self._physics_context.set_physics_dt(dt=timestep, substeps=self._n_substeps)
             self._timestep = timestep
+
         self._world.set_simulation_dt(rendering_dt=self.dt)
         print(f"rendering dt: {self._world.get_rendering_dt()}, physix dt: {self._world.get_physics_dt()}")
 
     def _set_camera(self):
+        """Set up the camera in the simulation."""
+
         from omni.kit.viewport.utility import get_viewport_from_window_name
         from omni.kit.viewport.utility.camera_state import ViewportCameraState
         from pxr import Gf
         import omni.replicator.core as rep
-        import os
 
         viewport_api_2 = get_viewport_from_window_name("Viewport")
         viewport_api_2.set_active_camera("/OmniverseKit_Persp")
-        camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
-        camera_state.set_position_world(Gf.Vec3d(25, 0, 6), True)
-        camera_state.set_target_world(Gf.Vec3d(5, 0, 0), True)
 
-        #create annotator
+        camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
+        camera_state.set_position_world(Gf.Vec3d(80, 0, 4), True)
+        camera_state.set_target_world(Gf.Vec3d(70, 0, 0), True)
+
         rp = rep.create.render_product("/OmniverseKit_Persp", (1280, 720))
         self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
         self.rgb_annot.attach(rp)
 
     def _create_light(self, prim_path="/World/defaultDistantLight", intensity=1000):
+        """Create a default light source in the scene."""
         from omni.isaac.core.utils.stage import get_current_stage
         from pxr import UsdLux
+
         stage = get_current_stage()
         light = UsdLux.DistantLight.Define(stage, prim_path)
         light.CreateIntensityAttr().Set(intensity)
 
     def _set_task(self, usd_path, n_envs, env_spacing, collision_between_envs, observation_spec, action_spec, 
                   additional_data_spec, collision_groups):
+        """Set up the simulation task."""
         from mushroom_rl.environments.isaac_sim_task import IsaacSimTask
 
-        self._task = IsaacSimTask(self._physics_context, usd_path, n_envs, env_spacing, 
-                                  collision_between_envs, observation_spec, action_spec, additional_data_spec, 
-                                  collision_groups, self._backend, self._action_type, self._n_intermediate_steps, self._device)
+        self._task = IsaacSimTask(
+            self._physics_context, usd_path, n_envs, env_spacing, collision_between_envs, 
+            observation_spec, action_spec, additional_data_spec, collision_groups, 
+            self._backend, self._action_type, self._n_intermediate_steps, self._device
+        )
         self._world.add_task(self._task)
 
-    def render_all(self, env_mask, record=False):#TODO add recording
+    def render_all(self, env_mask, record=False):
+        """Render all environments. Optionally record the frames."""
         self._world.render()
         data = self.rgb_annot.get_data()[..., :3]
 

@@ -65,7 +65,7 @@ class IsaacA1Description(IsaacSim):
         ]
         additional_data_spec = [("body_rot", "", ObservationType.BODY_ROT), ("body_vel", "", ObservationType.BODY_VEL)]
         collision_groups = [
-            ("groundplane", ["/World/defaultGroundPlane/GroundPlane/CollisionPlane"]), 
+            ("groundplane", ["/World/groundPlane/collisionPlane"]), 
             ("FL_foot", ["/FL_foot"]), 
             ("FR_foot", ["/FR_foot"]), 
             ("RL_foot", ["/RL_foot"]), 
@@ -182,6 +182,13 @@ class IsaacA1Description(IsaacSim):
 
         self._resample_commands(env_indices)
 
+        zero = torch.zeros(self._n_envs, device=self._device)
+        self._extra_info_rewards = self._extra_info_rewards = {
+            "r_tracking_lin_vel": zero, "r_tracking_ang_vel": zero, "r_lin_vel_z": zero,
+            "r_ang_vel_xy": zero, "r_torques": zero, "r_dof_acc": zero, "r_feet_air_time": zero,
+            "r_collision": zero, "r_action_rate": zero, "r_dof_pos_limits": zero
+        }
+
     def _modify_observation(self, obs):
         dof_pos_indices = self.observation_helper.obs_types_idx_map[ObservationType.JOINT_POS]
         obs[:, dof_pos_indices] -= self._default_joint_angles
@@ -268,7 +275,7 @@ class IsaacA1Description(IsaacSim):
         return torque
     
     def _create_info_dictionary(self, obs):
-        return {}
+        return self._extra_info_rewards
     
     def _compute_torque(self, action, joint_vels, joint_pos):
         actions_scaled = action * 0.25
@@ -302,7 +309,12 @@ class IsaacA1Description(IsaacSim):
         r_collision = self._reward_collision() * -1. * self.dt
         r_action_rate = self._reward_action_rate(action) * -0.01 * self.dt
         r_dof_pos_limits = self._reward_dof_pos_limits(dof_pos) * -10.0 * self.dt
-        
+
+        self._extra_info_rewards = {
+            "r_tracking_lin_vel": r_tracking_lin_vel, "r_tracking_ang_vel": r_tracking_ang_vel, "r_lin_vel_z": r_lin_vel_z,
+            "r_ang_vel_xy": r_ang_vel_xy, "r_torques": r_torques, "r_dof_acc": r_dof_acc, "r_feet_air_time": r_feet_air_time,
+            "r_collision": r_collision, "r_action_rate": r_action_rate, "r_dof_pos_limits": r_dof_pos_limits
+        }
 
         reward = r_tracking_lin_vel + r_tracking_ang_vel + r_lin_vel_z + r_ang_vel_xy + r_torques + r_dof_acc + r_feet_air_time \
                 + r_collision + r_action_rate + r_dof_pos_limits

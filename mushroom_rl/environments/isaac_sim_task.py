@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import hydra
+import math
 from omni.isaac.core.tasks import BaseTask
 from omni.isaac.core.utils.stage import add_reference_to_stage, print_stage_prim_paths
 from omni.isaac.core.articulations import ArticulationView
@@ -12,8 +13,7 @@ from omni.isaac.core.prims import RigidPrimView
 from omni.physx.scripts.physicsUtils import *
 from omni.physx import get_physx_simulation_interface
 
-from mushroom_rl.environments.isaac_sim_env import ActionType #TODO
-from mushroom_rl.utils.isaac_sim import ObservationType, CollisionHelper
+from mushroom_rl.utils.isaac_sim import ObservationType, CollisionHelper, ActionType
 from mushroom_rl.core.array_backend import ArrayBackend
 from mushroom_rl.utils import TorchUtils
 
@@ -81,7 +81,7 @@ class IsaacSimTask(BaseTask):
         )
         scene.add(self.robots)
 
-        scene.add_default_ground_plane()
+        scene.add_ground_plane(size=math.ceil(self._num_envs**0.5) * self._env_spacing)
         
         self._views[""] = self.robots
 
