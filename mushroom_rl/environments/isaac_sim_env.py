@@ -58,7 +58,6 @@ class IsaacSim(VectorizedEnvironment):
 
         # Initialize world and tasks
         self._create_world(timestep)
-        self._set_camera()
         self._create_light()
         self._set_task(
             usd_path, 
@@ -139,26 +138,7 @@ class IsaacSim(VectorizedEnvironment):
         self._world.set_simulation_dt(rendering_dt=self.dt)
         print(f"rendering dt: {self._world.get_rendering_dt()}, physix dt: {self._world.get_physics_dt()}")
 
-    def _set_camera(self):
-        """Set up the camera in the simulation."""
-
-        from omni.kit.viewport.utility import get_viewport_from_window_name
-        from omni.kit.viewport.utility.camera_state import ViewportCameraState
-        from pxr import Gf
-        import omni.replicator.core as rep
-
-        viewport_api_2 = get_viewport_from_window_name("Viewport")
-        viewport_api_2.set_active_camera("/OmniverseKit_Persp")
-
-        camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
-        camera_state.set_position_world(Gf.Vec3d(80, 0, 4), True)
-        camera_state.set_target_world(Gf.Vec3d(70, 0, 0), True)
-
-        rp = rep.create.render_product("/OmniverseKit_Persp", (1280, 720))
-        self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
-        self.rgb_annot.attach(rp)
-
-    def _create_light(self, prim_path="/World/defaultDistantLight", intensity=1000):
+    def _create_light(self, prim_path="/World/defaultDistantLight", intensity=1000):#maybe move to task
         """Create a default light source in the scene."""
         from omni.isaac.core.utils.stage import get_current_stage
         from pxr import UsdLux
@@ -182,7 +162,7 @@ class IsaacSim(VectorizedEnvironment):
     def render_all(self, env_mask, record=False):
         """Render all environments. Optionally record the frames."""
         self._world.render()
-        data = self.rgb_annot.get_data()[..., :3]
+        data = self._task.rgb_annot.get_data()[..., :3]
 
         if self._viewer is None:
             self._viewer = ImageViewer((1280, 720), self.dt)
@@ -273,7 +253,9 @@ class IsaacSim(VectorizedEnvironment):
         if self._viewer is not None:
             self._viewer.close()
             self._viewer = None
-        self._world.reset()
+        #self._world.reset() #leads sometimes to an illegal cuda memory access
+        #self._task.reset_env(list(range(self.number)))
+        self._world.reset(soft=True)
 
     def __del__(self):
         if self._viewer is not None:
