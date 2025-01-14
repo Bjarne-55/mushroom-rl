@@ -111,10 +111,13 @@ class IsaacSim(VectorizedEnvironment):
                 'use_gpu': True}
         )
         self._physics_context = self._world.get_physics_context()
-        self._physics_context.set_gpu_found_lost_aggregate_pairs_capacity(32 * 1024)
-        self._physics_context.set_gpu_total_aggregate_pairs_capacity(8*1024)
+        self._physics_context.set_gpu_found_lost_aggregate_pairs_capacity(128 * 1024)
+        self._physics_context.set_gpu_total_aggregate_pairs_capacity(128*1024)
         self._physics_context.set_gpu_temp_buffer_capacity(16777216)
 
+        self._physics_context.set_gpu_max_rigid_patch_count(2 * 81920)
+
+        """
         self._physics_context.set_gpu_max_rigid_contact_count(524288)
         self._physics_context.set_gpu_max_rigid_patch_count(81920)
         self._physics_context.set_gpu_found_lost_pairs_capacity(8192)
@@ -125,6 +128,7 @@ class IsaacSim(VectorizedEnvironment):
         self._physics_context.set_gpu_heap_capacity(67108864)
         self._physics_context.set_gpu_temp_buffer_capacity(16777216)
         self._physics_context.set_gpu_max_num_partitions(8)
+        """
 
         self._physics_context.enable_gpu_dynamics(True)
 
@@ -179,6 +183,7 @@ class IsaacSim(VectorizedEnvironment):
         action = self._preprocess_action(action)
 
         env_indices = arr_backend.where(env_mask)[0]
+        self._task.teleport_away(arr_backend.where(env_mask == False)[0])
 
         ctrl_action = None
 

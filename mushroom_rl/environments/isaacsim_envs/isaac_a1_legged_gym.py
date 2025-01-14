@@ -13,6 +13,8 @@ def torch_rand_float(lower, upper, shape, device):
 
 class IsaacA1Description(IsaacSim):
     def __init__(self, num_envs, horizon, headless):
+        self.NUM_DOFS = 12
+
         backend="torch"
         device="cuda:0"
 
@@ -82,12 +84,10 @@ class IsaacA1Description(IsaacSim):
         
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)
         self.observation_helper.add_obs("commands", 3, -1, 1)
-        self.observation_helper.add_obs("actions", 12, self.info.action_space.low, self.info.action_space.high)
+        self.observation_helper.add_obs("actions", self.NUM_DOFS, self.info.action_space.low, self.info.action_space.high)
         self._mdp_info.observation_space = Box(*self.observation_helper.obs_limits)
 
         self.commands = torch.zeros(num_envs, 4, dtype=torch.float, device=device)
-        self.goal_linear_velocity_xy = torch.tensor([0.1, 0], device=device).repeat(self.number, 1) #simplified in legged_gym every env has random goal
-        self.goal_angular_velocity_z = torch.tensor([0], device=device).repeat(self.number)
         
         self.normalization_obs_vec = self._get_obs_normilization_vec()
         self.noise_scale_vec = self._get_noise_scale_vec()
@@ -95,11 +95,11 @@ class IsaacA1Description(IsaacSim):
         self._soft_dof_pos_limits = self._get_soft_dof_pos_limit()
         
 
-        self._actions = torch.zeros((num_envs, 12), device=device)
+        self._actions = torch.zeros((num_envs, self.NUM_DOFS), device=device)
 
         self.feet_air_time = torch.zeros((num_envs, 4), device=device)
-        self.last_actions =  torch.zeros((num_envs, 12), device=device)
-        self.last_dof_vel = torch.zeros((num_envs, 12), device=device)
+        self.last_actions =  torch.zeros((num_envs, self.NUM_DOFS), device=device)
+        self.last_dof_vel = torch.zeros((num_envs, self.NUM_DOFS), device=device)
         self.last_contacts = torch.zeros((num_envs, 4), device=device, dtype=torch.bool)
 
         self.forward_vec = torch.tensor([1., 0., 0.], device=device).repeat((num_envs, 1))
@@ -150,7 +150,7 @@ class IsaacA1Description(IsaacSim):
         return v
     
     def _get_soft_dof_pos_limit(self):
-        dof_pos_limits = torch.zeros(12, 2, dtype=torch.float, device=self._device, requires_grad=False)
+        dof_pos_limits = torch.zeros(self.NUM_DOFS, 2, dtype=torch.float, device=self._device, requires_grad=False)
         low = self.info.observation_space.low[self.observation_helper.obs_types_idx_map[ObservationType.JOINT_POS]]
         high = self.info.observation_space.high[self.observation_helper.obs_types_idx_map[ObservationType.JOINT_POS]]
         
@@ -172,7 +172,7 @@ class IsaacA1Description(IsaacSim):
 
         self._actions[env_indices] = 0
 
-        dof_pos = self._default_joint_angles * torch_rand_float(0.5, 1.5, (len(env_indices), 12), device=self._device)
+        dof_pos = self._default_joint_angles * torch_rand_float(0.5, 1.5, (len(env_indices), self.NUM_DOFS), device=self._device)
         dof_vel = torch.zeros((len(env_indices), len(self._action_spec)), device=self._device)
 
         self._set_joint_data(dof_pos, ObservationType.JOINT_POS, env_indices=env_indices)
@@ -285,7 +285,7 @@ class IsaacA1Description(IsaacSim):
         return self._torques
     
     #Taken from https://proceedings.mlr.press/v164/rudin22a.html
-    #Ripped from https://github.com/leggedrobotics/legged_gym/blob/17847702f90d8227cd31cce9c920aa53a739a09a/legged_gym/envs/base/legged_robot.py#L815C3-L816C12
+    #Taken from https://github.com/leggedrobotics/legged_gym/blob/17847702f90d8227cd31cce9c920aa53a739a09a/legged_gym/envs/base/legged_robot.py#L815C3-L816C12
     def reward(self, obs, action, next_obs, absorbing):
         base_lin_vel = self.observation_helper.get_from_obs(next_obs, "base_lin_vel")
         base_lin_vel_xy = base_lin_vel[:, 0:2]
@@ -370,7 +370,7 @@ class IsaacA1Description(IsaacSim):
         # Reward long steps
         contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
         for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
-            contact[:, i] = self._check_collision(foot, "groundplane", 1., lambda x: torch.max(x[:, :, 2], dim=1).values)
+            contact[:, i] = self._check_collision(foot, "groundplane", 1., lambda x: torch.max(x[:, :, 2], dim=1).values) #check if this is actually correct
         contact_filt = torch.logical_or(contact, self.last_contacts) 
         self.last_contacts = contact
         first_contact = (self.feet_air_time > 0.) * contact_filt

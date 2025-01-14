@@ -55,8 +55,10 @@ class IsaacSimTask(BaseTask):
         viewport_api_2.set_active_camera("/OmniverseKit_Persp")
 
         camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
-        camera_state.set_position_world(Gf.Vec3d(80, 0, 4), True)
-        camera_state.set_target_world(Gf.Vec3d(70, 0, 0), True)
+        camera_state.set_position_world(Gf.Vec3d(105, 0, 4), True)
+        camera_state.set_target_world(Gf.Vec3d(95, 0, 0), True)
+        #camera_state.set_position_world(Gf.Vec3d(5, 0, 4), True)
+        #camera_state.set_target_world(Gf.Vec3d(0, 0, 0), True)
 
         rp = rep.create.render_product("/OmniverseKit_Persp", (1280, 720))
         self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
@@ -83,6 +85,7 @@ class IsaacSimTask(BaseTask):
             replicate_physics=True, 
             copy_from_source=False #Faster, but changes made to source prim will also reflect in the cloned prims
         )
+        self.env_pos = np.float32(self.env_pos)
         self.env_pos = ArrayBackend.convert(self.env_pos, to=self._backend)
         
         #handle collisions between environments
@@ -262,7 +265,7 @@ class IsaacSimTask(BaseTask):
 
     def _read_property(self, view, obs_type, joint_indices=None, env_indices=None, clone=True):
         if obs_type == ObservationType.BODY_POS:
-            return view.get_world_poses(indices=env_indices, clone=clone)[0] - self.env_pos
+            return view.get_world_poses(indices=env_indices, clone=clone)[0] - self.env_pos #TODO maybe change to local_poses
         elif obs_type == ObservationType.BODY_ROT:
             return view.get_world_poses(indices=env_indices, clone=clone)[1]
         elif obs_type == ObservationType.BODY_LIN_VEL:
@@ -296,3 +299,8 @@ class IsaacSimTask(BaseTask):
     
     def set_joint_data(self, value, type, joint_indices=None, env_indices=None):
         self._set_property(self.robots, type, value, joint_indices, env_indices)
+
+    def teleport_away(self, env_indices):
+        pos = self.env_pos[env_indices]
+        pos[:, 2] = -10
+        self.robots.set_world_poses(positions=pos, indices=env_indices)
