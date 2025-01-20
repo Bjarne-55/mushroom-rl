@@ -15,7 +15,8 @@ class IsaacSim(VectorizedEnvironment):
     # TODO think about tasks
     def __init__(self, usd_path, action_spec, observation_spec, backend, device, collision_between_envs, 
                  n_envs, env_spacing, gamma, horizon, timestep=None, n_substeps=1, n_intermediate_steps=1, 
-                 additional_data_spec=None, collision_groups=None, action_type=ActionType.EFFORT, headless=True):
+                 additional_data_spec=None, collision_groups=None, action_type=ActionType.EFFORT, headless=True,
+                 physics_material_spec=None):
         """
         Constructor.
 
@@ -67,7 +68,8 @@ class IsaacSim(VectorizedEnvironment):
             observation_spec, 
             action_spec, 
             additional_data_spec, 
-            collision_groups
+            collision_groups,
+            physics_material_spec
         )
         self._world.reset()
 
@@ -152,14 +154,15 @@ class IsaacSim(VectorizedEnvironment):
         light.CreateIntensityAttr().Set(intensity)
 
     def _set_task(self, usd_path, n_envs, env_spacing, collision_between_envs, observation_spec, action_spec, 
-                  additional_data_spec, collision_groups):
+                  additional_data_spec, collision_groups, physics_material_spec):
         """Set up the simulation task."""
         from mushroom_rl.environments.isaac_sim_task import IsaacSimTask
 
         self._task = IsaacSimTask(
             self._physics_context, usd_path, n_envs, env_spacing, collision_between_envs, 
             observation_spec, action_spec, additional_data_spec, collision_groups, 
-            self._backend, self._action_type, self._n_intermediate_steps, self._device
+            self._backend, self._action_type, self._n_intermediate_steps, self._device,
+            physics_material_spec
         )
         self._world.add_task(self._task)
 
@@ -169,13 +172,13 @@ class IsaacSim(VectorizedEnvironment):
         data = self._task.rgb_annot.get_data()[..., :3]
 
         if self._viewer is None:
-            self._viewer = ImageViewer((1280, 720), self.dt)
+            self._viewer = ImageViewer((1280, 720), 0)
         self._viewer.display(data)
 
         if record:
             return data
 
-    def step_all(self, env_mask, action):#TODO intermediate and substeps
+    def step_all(self, env_mask, action):
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
 
         cur_obs = self._obs.clone().detach()
@@ -205,6 +208,8 @@ class IsaacSim(VectorizedEnvironment):
         if not self._recompute_action_per_step:
             cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
             cur_obs = self._create_observation(cur_obs)
+
+        self._step_finalize(env_indices)
 
         absorbing = self.is_absorbing(cur_obs)
         reward = self.reward(self._obs, action, cur_obs, absorbing)
@@ -325,7 +330,7 @@ class IsaacSim(VectorizedEnvironment):
         """
         raise NotImplementedError
     
-    def _check_collision(self, group1, group2, threshold=0., selector=None):
+    def _check_collision(self, group1, group2, threshold=0., selector=None, dt=1.):
         """
         Check for collision between the specified groups.
 
@@ -341,11 +346,11 @@ class IsaacSim(VectorizedEnvironment):
 
         """
         if selector:
-            return self._task.collision_helper.check_collision(group1, group2, threshold, selector=selector)
+            return self._task.collision_helper.check_collision(group1, group2, threshold, selector=selector, dt=dt)
         else:
-            return self._task.collision_helper.check_collision(group1, group2, threshold)
+            return self._task.collision_helper.check_collision(group1, group2, threshold, dt=dt)
 
-    def _get_collision_force(self, group1, group2, selector=None):
+    def _get_collision_force(self, group1, group2, selector=None, dt=1.):
         """
         Returns the collision force and torques between the specified groups.
 
@@ -359,15 +364,15 @@ class IsaacSim(VectorizedEnvironment):
             A 3D vector specifying the collision forces
         """
         if selector:
-            return self._task.collision_helper.get_collision_force(group1, group2, selector)
+            return self._task.collision_helper.get_collision_force(group1, group2, selector, dt)
         else:
-            return self._task.collision_helper.get_collision_force(group1, group2)
+            return self._task.collision_helper.get_collision_force(group1, group2, dt=dt)
     
-    def _get_collision_count(self, group1, group2, threshold=0., selector=None):
+    def _get_collision_count(self, group1, group2, threshold=0., selector=None, dt=1.):
         if selector:
-            return self._task.collision_helper.count_collisions(group1, group2, threshold, selector=selector)
+            return self._task.collision_helper.count_collisions(group1, group2, threshold, selector=selector, dt=dt)
         else:
-            return self._task.collision_helper.count_collisions(group1, group2, threshold)
+            return self._task.collision_helper.count_collisions(group1, group2, threshold, dt=dt)
     
     def _read_data(self, name, env_indices=None):
         return self._task.read_data(name, env_indices)
@@ -440,5 +445,11 @@ class IsaacSim(VectorizedEnvironment):
         after taking a step in the mujoco simulation.
         Can be usefull to average forces over all intermediate steps.
 
+        """
+        pass
+
+    def _step_finalize(self, env_indices):
+        """
+        Allows information to be accesed at the end of a step.
         """
         pass

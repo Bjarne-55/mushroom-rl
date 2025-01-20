@@ -2,13 +2,21 @@ import numpy as np
 import torch
 import hydra
 import math
+
 from omni.isaac.core.tasks import BaseTask
 from omni.isaac.core.utils.stage import add_reference_to_stage, print_stage_prim_paths
 from omni.isaac.core.articulations import ArticulationView
 from omni.isaac.cloner import GridCloner
 from omni.usd import get_context
-from pxr import UsdGeom, PhysxSchema, UsdPhysics, Sdf
+from pxr import UsdGeom, Gf
 from omni.isaac.core.prims import RigidPrimView
+from omni.isaac.core.utils.types import ArticulationActions
+from omni.isaac.core.robots.robot import Robot
+from omni.isaac.core.prims import GeometryPrimView
+from omni.isaac.core.materials import PhysicsMaterial
+from omni.kit.viewport.utility import get_viewport_from_window_name
+from omni.kit.viewport.utility.camera_state import ViewportCameraState
+import omni.replicator.core as rep
 
 from omni.physx.scripts.physicsUtils import *
 from omni.physx import get_physx_simulation_interface
@@ -17,8 +25,7 @@ from mushroom_rl.utils.isaac_sim import ObservationType, CollisionHelper, Action
 from mushroom_rl.core.array_backend import ArrayBackend
 from mushroom_rl.utils import TorchUtils
 
-from omni.isaac.core.utils.types import ArticulationActions
-from omni.isaac.core.robots.robot import Robot
+
 
 class IsaacSimTask(BaseTask):
     BASE_ENV_PATH = "/World/envs"
@@ -26,7 +33,8 @@ class IsaacSimTask(BaseTask):
     ZERO_ENV_PATH = TEMPLATE_ENV_PATH + "_0"
 
     def __init__(self, physic_context, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, 
-                 action_spec, additional_data_spec, collision_groups, backend, action_type, intermediate_steps, device):
+                 action_spec, additional_data_spec, collision_groups, backend, action_type, intermediate_steps, device,
+                 physics_material_spec):
         self.usd_path = usd_path
         self._physic_context = physic_context
         self._num_envs = num_envs
@@ -34,10 +42,11 @@ class IsaacSimTask(BaseTask):
         self._collisions_between_envs = collision_between_envs
         self._observation_spec = observation_spec
         self._action_spec = action_spec
-        self._additional_data_spec = additional_data_spec
+        self._additional_data_spec = additional_data_spec if additional_data_spec is not None else []
         self._backend = backend
         self._device = device
         self._action_type = action_type
+        self._physics_material_spec = physics_material_spec
 
         self.collision_helper = CollisionHelper(collision_groups, backend, num_envs, device)
 
@@ -45,12 +54,6 @@ class IsaacSimTask(BaseTask):
 
     def _set_camera(self):
         """Set up the camera in the simulation."""
-
-        from omni.kit.viewport.utility import get_viewport_from_window_name
-        from omni.kit.viewport.utility.camera_state import ViewportCameraState
-        from pxr import Gf
-        import omni.replicator.core as rep
-
         viewport_api_2 = get_viewport_from_window_name("Viewport")
         viewport_api_2.set_active_camera("/OmniverseKit_Persp")
 
@@ -66,22 +69,24 @@ class IsaacSimTask(BaseTask):
     
     def set_up_scene(self, scene):
         super().set_up_scene(scene)
+        stage = get_context().get_stage()
         self._views = {}
 
         #Define env_0
         add_reference_to_stage(self.usd_path, self.ZERO_ENV_PATH + "/Robot")
 
+        self.collision_helper.prepare_env(scene, stage)
+
         #clone env_0
         self._cloner = GridCloner(spacing=self._env_spacing)#check with automatic spacing
         self._cloner.define_base_env(self.BASE_ENV_PATH)
-
-        stage = get_context().get_stage()
+        
         UsdGeom.Xform.Define(stage, self.ZERO_ENV_PATH)
 
-        prim_paths = self._cloner.generate_paths(self.TEMPLATE_ENV_PATH, self._num_envs)
+        self.prim_paths = self._cloner.generate_paths(self.TEMPLATE_ENV_PATH, self._num_envs)
         self.env_pos = self._cloner.clone(
             source_prim_path=self.ZERO_ENV_PATH, 
-            prim_paths=prim_paths, 
+            prim_paths=self.prim_paths, 
             replicate_physics=True, 
             copy_from_source=False #Faster, but changes made to source prim will also reflect in the cloned prims
         )
@@ -93,7 +98,7 @@ class IsaacSimTask(BaseTask):
             self._cloner.filter_collisions(
                 self._physic_context.prim_path,
                 "/World/collisions",
-                prim_paths
+                self.prim_paths
             )
         
         self.robots = ArticulationView(
@@ -103,12 +108,12 @@ class IsaacSimTask(BaseTask):
         )
         scene.add(self.robots)
 
-        scene.add_ground_plane(size=math.ceil(self._num_envs**0.5) * self._env_spacing)
+        scene.add_ground_plane(size=math.ceil(self._num_envs**0.5) * self._env_spacing, static_friction=1., dynamic_friction=1., restitution=0.)
         
         self._views[""] = self.robots
 
         #register view
-        self._views.update(self.collision_helper.set_up(scene, stage))
+        self.collision_helper.set_up(scene, stage)
 
         if self._additional_data_spec is None:
             specifications = self._observation_spec 
@@ -125,6 +130,10 @@ class IsaacSimTask(BaseTask):
                 scene.add(view)
                 self._views[path] = view
         
+        #apply physics materials for all envs except env_0
+        if self._physics_material_spec is not None:
+            self._apply_physics_materials(self._physics_material_spec)
+
         self._set_camera()
     
     def get_observations(self, clone=True):
@@ -206,6 +215,8 @@ class IsaacSimTask(BaseTask):
         """
         Called as the last step when resetting the world. 
         """
+        self.collision_helper.post_reset()
+
         self._controlled_joints = []
         for joint_name in self._action_spec:
             joint_index = self.robots.get_dof_index(joint_name)
@@ -281,7 +292,7 @@ class IsaacSimTask(BaseTask):
                 joint_indices = self._controlled_joints
             return view.get_joint_velocities(indices=env_indices, joint_indices=joint_indices, clone=clone)
         elif obs_type == ObservationType.BODY_VEL:
-            view.get_velocities(indices=env_indices, clone=clone)
+            return view.get_velocities(indices=env_indices, clone=clone)
 
     def write_data(self, name, value, env_indices=None):
         if name in self._additionals:
@@ -304,3 +315,25 @@ class IsaacSimTask(BaseTask):
         pos = self.env_pos[env_indices]
         pos[:, 2] = -10
         self.robots.set_world_poses(positions=pos, indices=env_indices)
+
+    def _apply_physics_materials(self, values):
+        """
+        Args:
+            values (list of tuple)
+            paths (list,):
+        """
+        materials = {}
+        for i, (name, dynamic_friction, static_friction, restitution) in enumerate(values):
+            
+            if name not in materials:
+                materials[name] = PhysicsMaterial(
+                    prim_path=f"/World/Physics_Materials/{name}",
+                    name=name,
+                    dynamic_friction=dynamic_friction,
+                    static_friction=static_friction,
+                    restitution=restitution
+                )
+            view = GeometryPrimView(self.prim_paths[i] + "/Robot", reset_xform_properties=False)
+            view.apply_physics_materials(materials[name])
+        
+        print("applied materials")

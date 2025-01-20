@@ -12,9 +12,23 @@ class CollisionHelper:
         self._device = device
         self._num_envs = num_envs
         self.collision_groups = {key: group for key, group in collision_groups} if collision_groups is not None else {}
+        self._first_set_up = True
+
+    def prepare_env(self, scene, stage):
+        from pxr import PhysxSchema
+        from omni.isaac.core.prims import RigidPrim, RigidPrimView
+        for group_name, group in self.collision_groups.items():
+            for path in group:
+                if path.startswith("/World/"):
+                    continue
+                prim = stage.GetPrimAtPath(self.ZERO_ENV_PATH + "/Robot" + path)
+                if not prim.HasAPI(PhysxSchema.PhysxRigidBodyAPI):
+                    PhysxSchema.PhysxRigidBodyAPI.Apply(prim)
+                if not prim.HasAPI(PhysxSchema.PhysxContactReportAPI):
+                    PhysxSchema.PhysxContactReportAPI.Apply(prim)
 
     def set_up(self, scene, stage):
-        from omni.isaac.core.prims import RigidPrimView, GeometryPrimView
+        from omni.isaac.core.prims import RigidContactView
         self._views = {}
         self._collision_groups_indices = {}
         self._collision_group_contains_world = {key: False for key in self.collision_groups}
@@ -31,18 +45,22 @@ class CollisionHelper:
                 if path.startswith("/World/"):
                     self._collision_group_contains_world[group_name] = True
                     continue
-                view = RigidPrimView(
+                view = RigidContactView(
                     prim_paths_expr= self.BASE_ENV_PATH + "/.*/Robot" + path,
                     name=path.replace("/", "_") + "_view",
-                    reset_xform_properties=False,
-                    contact_filter_prim_paths_expr=possible_partners,
+                    filter_paths_expr=possible_partners,
                     prepare_contact_sensors=False
                 )
-                scene.add(view)
                 self._views[path] = view
-        return self._views
+    
+    def post_reset(self):
+        if self._first_set_up:
+            for path in self._views:
+                self._views[path].initialize()
+            self._first_set_up = False
+            
 
-    def get_collision_force(self, group1, group2, selector=lambda x: torch.max(torch.norm(x, dim=2), dim=1).values):
+    def get_collision_force(self, group1, group2, selector=lambda x: torch.max(torch.norm(x, dim=2), dim=1).values, dt=1.0):
         
         if self._collision_group_contains_world[group2]:
             prims = self.collision_groups[group1]
@@ -51,14 +69,14 @@ class CollisionHelper:
             prims = self.collision_groups[group2]
             indices_prims2 = self._collision_groups_indices[group2][group1]
         
-        forces = torch.cat([self._views[p].get_contact_force_matrix(clone=False)[:, indices_prims2] for p in prims], dim=1)
+        forces = torch.cat([self._views[p].get_contact_force_matrix(clone=False, dt=dt)[:, indices_prims2] for p in prims], dim=1)
 
         return selector(forces)
     
-    def check_collision(self, group1, group2, threshold, selector=lambda x: torch.max(torch.norm(x, dim=2), dim=1).values):
-        forces = self.get_collision_force(group1, group2, selector)
+    def check_collision(self, group1, group2, threshold, selector=lambda x: torch.max(torch.norm(x, dim=2), dim=1).values, dt=1.0):
+        forces = self.get_collision_force(group1, group2, selector, dt)
         return forces > threshold
     
-    def count_collisions(self, group1, group2, threshold, selector=lambda x: torch.norm(x, dim=2)):
-        forces = self.get_collision_force(group1, group2, selector=selector)
+    def count_collisions(self, group1, group2, threshold, selector=lambda x: torch.norm(x, dim=2), dt=1.0):
+        forces = self.get_collision_force(group1, group2, selector, dt)
         return torch.sum(forces > threshold, dim=1)
