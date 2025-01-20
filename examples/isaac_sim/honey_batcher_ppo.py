@@ -74,7 +74,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     alg_params['critic_params'] = critic_params
 
     agent = alg(mdp.info, policy, **alg_params)
-    agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1736808001.4174385.zip")
+    #agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1736818810.1377356.zip")
     #agent.set_logger(logger)
 
     core = VectorCore(agent, mdp)

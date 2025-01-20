@@ -35,6 +35,9 @@ def quaternion_to_euler(quaternion):
 
     return torch.stack((roll, pitch, yaw), dim=-1)
 
+def torch_rand_float(lower, upper, shape, device):
+    return (upper - lower) * torch.rand(*shape, device=device) + lower
+
 
 class HoneyBatcher(IsaacA1Description):
     def __init__(self, num_envs, horizon, headless):
@@ -43,7 +46,7 @@ class HoneyBatcher(IsaacA1Description):
         backend="torch"
         device="cuda:0"
 
-        usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/honey_badger/honey_badger.usd"
+        usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/honey_badger_2/honey_badger/honey_badger.usd"
 
         self._action_spec = [
             "fl_j0", "fl_j1", "fl_j2",
@@ -108,10 +111,12 @@ class HoneyBatcher(IsaacA1Description):
         ]
         collision_between_envs = False
         env_spacing = 3.
+        physics_material_spec = self._get_values_for_physics_materials(num_envs)
         IsaacSim.__init__(self, usd_path, self._action_spec, observation_spec, backend, device, collision_between_envs, num_envs, 
                          env_spacing, 0.99, horizon, additional_data_spec=additional_data_spec, collision_groups=collision_groups, 
-                         action_type=ActionType.EFFORT, headless=headless, n_intermediate_steps=4, timestep=0.005) 
-        self._mdp_info.action_space = Box(*self._task.get_joint_pos_limits()*4.5)
+                         action_type=ActionType.EFFORT, headless=headless, n_intermediate_steps=4, timestep=0.005, 
+                         physics_material_spec=physics_material_spec) 
+        self._mdp_info.action_space = Box(*((self._task.get_joint_pos_limits() - self._default_joint_angles) / 0.25))
         
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)
         self.observation_helper.add_obs("commands", 3, -1, 1)
@@ -125,7 +130,6 @@ class HoneyBatcher(IsaacA1Description):
 
         self._soft_dof_pos_limits = self._get_soft_dof_pos_limit()
         
-
         self._actions = torch.zeros((num_envs, self.NUM_DOFS), device=device)
 
         self.feet_air_time = torch.zeros((num_envs, 4), device=device)
@@ -136,6 +140,8 @@ class HoneyBatcher(IsaacA1Description):
         self.forward_vec = torch.tensor([1., 0., 0.], device=device).repeat((num_envs, 1))
 
         self._effort_limit = self._task.get_joint_max_efforts()
+        self.episode_length = torch.zeros((num_envs, ), dtype=int, device=device)
+        self.step_counter = 0
 
     def _get_noise_scale_vec(self):
         v = torch.zeros((self.observation_helper.obs_length), device=self._device)
@@ -201,6 +207,8 @@ class HoneyBatcher(IsaacA1Description):
         obs = torch.clamp(obs, max=100., min=-100.)
         
         return obs
+    
+    #rewards --------------------------------------------------------------------
 
     def reward(self, obs, action, next_obs, absorbing):
         base_lin_vel = self.observation_helper.get_from_obs(next_obs, "base_lin_vel")
