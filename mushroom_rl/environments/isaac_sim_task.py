@@ -63,26 +63,37 @@ class IsaacSimTask(BaseTask):
         self.rgb_annot.attach(rp)
     
     def set_up_scene(self, scene):
+        """
+        Called during world reset. Adds robot specified by the usd path to scene and clones ``num_envs`` 
+        times. Creates various views for for reading and writing data.
+
+        """
         super().set_up_scene(scene)
+        stage = get_context().get_stage()
         self._views = {}
+
+        #create surroundings
+        self._set_camera()
 
         #Define env_0
         add_reference_to_stage(self.usd_path, self.ZERO_ENV_PATH + "/Robot")
 
-        #clone env_0
-        self._cloner = GridCloner(spacing=self._env_spacing)#check with automatic spacing
-        self._cloner.define_base_env(self.BASE_ENV_PATH)
+        self.collision_helper.prepare_env(stage)
 
-        stage = get_context().get_stage()
+        #clone env_0
+        self._cloner = GridCloner(spacing=self._env_spacing)
+        self._cloner.define_base_env(self.BASE_ENV_PATH)
+        
         UsdGeom.Xform.Define(stage, self.ZERO_ENV_PATH)
 
-        prim_paths = self._cloner.generate_paths(self.TEMPLATE_ENV_PATH, self._num_envs)
+        self.prim_paths = self._cloner.generate_paths(self.TEMPLATE_ENV_PATH, self._num_envs)
         self.env_pos = self._cloner.clone(
             source_prim_path=self.ZERO_ENV_PATH, 
-            prim_paths=prim_paths, 
+            prim_paths=self.prim_paths, 
             replicate_physics=True, 
             copy_from_source=False #Faster, but changes made to source prim will also reflect in the cloned prims
         )
+        self.env_pos = np.float32(self.env_pos)
         self.env_pos = ArrayBackend.convert(self.env_pos, to=self._backend)
         
         #handle collisions between environments
@@ -90,7 +101,7 @@ class IsaacSimTask(BaseTask):
             self._cloner.filter_collisions(
                 self._physic_context.prim_path,
                 "/World/collisions",
-                prim_paths
+                self.prim_paths
             )
         
         self.robots = ArticulationView(
@@ -105,7 +116,7 @@ class IsaacSimTask(BaseTask):
         self._views[""] = self.robots
 
         #register view
-        self._views.update(self.collision_helper.set_up(scene, stage))
+        self.collision_helper.set_up()
 
         if self._additional_data_spec is None:
             specifications = self._observation_spec 
@@ -121,8 +132,6 @@ class IsaacSimTask(BaseTask):
                 )
                 scene.add(view)
                 self._views[path] = view
-        
-        self._set_camera()
     
     def get_observations(self, clone=True):
         obs = {}
@@ -203,6 +212,8 @@ class IsaacSimTask(BaseTask):
         """
         Called as the last step when resetting the world. 
         """
+        self.collision_helper.post_reset()
+
         self._controlled_joints = []
         for joint_name in self._action_spec:
             joint_index = self.robots.get_dof_index(joint_name)
