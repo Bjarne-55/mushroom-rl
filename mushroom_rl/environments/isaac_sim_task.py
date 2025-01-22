@@ -55,8 +55,8 @@ class IsaacSimTask(BaseTask):
         viewport_api_2.set_active_camera("/OmniverseKit_Persp")
 
         camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
-        camera_state.set_position_world(Gf.Vec3d(80, 0, 4), True)
-        camera_state.set_target_world(Gf.Vec3d(70, 0, 0), True)
+        camera_state.set_position_world(Gf.Vec3d(105, 0, 4), True)
+        camera_state.set_target_world(Gf.Vec3d(95, 0, 0), True)
 
         rp = rep.create.render_product("/OmniverseKit_Persp", (1280, 720))
         self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")

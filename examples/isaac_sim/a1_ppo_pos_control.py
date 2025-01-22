@@ -13,7 +13,7 @@ from mushroom_rl.core import VectorCore, Logger
 from mushroom_rl.algorithms.actor_critic import TRPO, PPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
-from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
+from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym_pos import IsaacA1Description
 from mushroom_rl.utils import TorchUtils
 
 
