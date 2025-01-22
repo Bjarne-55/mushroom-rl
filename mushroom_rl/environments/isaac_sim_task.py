@@ -4,81 +4,106 @@ import hydra
 import math
 
 from omni.isaac.core.tasks import BaseTask
-from omni.isaac.core.utils.stage import add_reference_to_stage, print_stage_prim_paths
+from omni.isaac.core.utils.stage import add_reference_to_stage
 from omni.isaac.core.articulations import ArticulationView
 from omni.isaac.cloner import GridCloner
 from omni.usd import get_context
-from pxr import UsdGeom, Gf
-from omni.isaac.core.prims import RigidPrimView
+from pxr import UsdGeom, Gf, UsdLux
+from omni.isaac.core.prims import RigidPrimView, GeometryPrimView
 from omni.isaac.core.utils.types import ArticulationActions
-from omni.isaac.core.robots.robot import Robot
-from omni.isaac.core.prims import GeometryPrimView
 from omni.isaac.core.materials import PhysicsMaterial
 from omni.kit.viewport.utility import get_viewport_from_window_name
 from omni.kit.viewport.utility.camera_state import ViewportCameraState
 import omni.replicator.core as rep
-
-from omni.physx.scripts.physicsUtils import *
-from omni.physx import get_physx_simulation_interface
 
 from mushroom_rl.utils.isaac_sim import ObservationType, CollisionHelper, ActionType
 from mushroom_rl.core.array_backend import ArrayBackend
 from mushroom_rl.utils import TorchUtils
 
 
-
 class IsaacSimTask(BaseTask):
+    """
+    General isaac sim taks, that can be added to the world and will handle all requests for the isaac sim environment.
+    """
+
     BASE_ENV_PATH = "/World/envs"
     TEMPLATE_ENV_PATH = BASE_ENV_PATH + "/env"
     ZERO_ENV_PATH = TEMPLATE_ENV_PATH + "_0"
 
-    def __init__(self, physic_context, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, 
-                 action_spec, additional_data_spec, collision_groups, backend, action_type, intermediate_steps, device,
-                 physics_material_spec):
+    def __init__(self, physic_context, usd_path, num_envs, env_spacing, observation_spec, actuation_spec, backend, 
+                 device, action_type=ActionType.EFFORT, collision_between_envs=False, additional_data_spec=None, 
+                 collision_groups=None, physics_material_spec=None, camera_position=(5, 0, 4), 
+                 camera_target=(0, 0, 0)):
+        """
+        Constructor.
+
+        Args:
+            physic_context: Physics context of the isaac sim world
+            usd_path (str): Path to usd file of the robot.
+            num_envs (int): Number of parallel environments.
+            env_spacing (float): Distance between each environment.
+            observation_spec (list): A list containing the names of data that should be made available to the agent as
+               an observation and their type (ObservationType). They are combined with a path, which is used to access
+               the data. An entry in the list is given by: (key, name, type). The name can later be used to retrieve
+               specific observations.
+            actuation_spec (list): A list specifying the names of the joints  which should be controllable by the
+               agent.
+            backend (str): name of the backend for array operations.
+            device (str): Compute device (e.g., 'cuda:0').
+            action_type (ActionType): Control type of the joints (effort, position, velocity).
+            collision_between_envs (bool): Whether inter-environment collisions are allowed.
+            additional_data_spec (list): A list containing the data fields of interest, which should be read from
+               or written to during simulation. The entries are given as the following tuples: (key, path, type) key
+               is a string for later referencing in the "read_data" and "write_data" methods.
+            collision_groups (list, None): A list containing groups of prims for which collisions should be checked during
+                simulation. The entries are given as ``(key, prim_paths)``, where key is a string for later reference and 
+                prim_paths is a list of paths to the prims.
+            physics_material_spec (list, None): A list containing all data to create a custom physics material for each environment, which 
+                will be applied to all rigidbodies. 
+                The entries are given as the following tuples: (name, dynamic_friction, static_friction, restitution)
+            camera_position (tuple): The position where the camera is placed.
+            camera_target (tuple): The position the camera is aimed at.
+        """
         self.usd_path = usd_path
         self._physic_context = physic_context
         self._num_envs = num_envs
         self._env_spacing = env_spacing
         self._collisions_between_envs = collision_between_envs
         self._observation_spec = observation_spec
-        self._action_spec = action_spec
+        self._actuation_spec = actuation_spec
         self._additional_data_spec = additional_data_spec if additional_data_spec is not None else []
         self._backend = backend
         self._device = device
         self._action_type = action_type
         self._physics_material_spec = physics_material_spec
+        self._initial_camera_pos = camera_position
+        self._initial_camera_target = camera_target
 
         self.collision_helper = CollisionHelper(collision_groups, backend, num_envs, device)
 
-        super().__init__("CustomNameTask")#TODO
+        super().__init__("MushroomTask")
 
-    def _set_camera(self):
-        """Set up the camera in the simulation."""
-        viewport_api_2 = get_viewport_from_window_name("Viewport")
-        viewport_api_2.set_active_camera("/OmniverseKit_Persp")
-
-        camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
-        camera_state.set_position_world(Gf.Vec3d(105, 0, 4), True)
-        camera_state.set_target_world(Gf.Vec3d(95, 0, 0), True)
-        #camera_state.set_position_world(Gf.Vec3d(5, 0, 4), True)
-        #camera_state.set_target_world(Gf.Vec3d(0, 0, 0), True)
-
-        rp = rep.create.render_product("/OmniverseKit_Persp", (1280, 720))
-        self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
-        self.rgb_annot.attach(rp)
-    
     def set_up_scene(self, scene):
+        """
+        Called during world reset. Adds robot specified by the usd path to scene and clones ``num_envs`` 
+        times. Creates various views for for reading and writing data.
+
+        """
         super().set_up_scene(scene)
         stage = get_context().get_stage()
         self._views = {}
 
+        #create surroundings
+        self._set_camera()
+        self._create_light(stage)
+
         #Define env_0
         add_reference_to_stage(self.usd_path, self.ZERO_ENV_PATH + "/Robot")
 
-        self.collision_helper.prepare_env(scene, stage)
+        self.collision_helper.prepare_env(stage)
 
         #clone env_0
-        self._cloner = GridCloner(spacing=self._env_spacing)#check with automatic spacing
+        self._cloner = GridCloner(spacing=self._env_spacing)
         self._cloner.define_base_env(self.BASE_ENV_PATH)
         
         UsdGeom.Xform.Define(stage, self.ZERO_ENV_PATH)
@@ -113,7 +138,7 @@ class IsaacSimTask(BaseTask):
         self._views[""] = self.robots
 
         #register view
-        self.collision_helper.set_up(scene, stage)
+        self.collision_helper.set_up()
 
         if self._additional_data_spec is None:
             specifications = self._observation_spec 
@@ -130,95 +155,18 @@ class IsaacSimTask(BaseTask):
                 scene.add(view)
                 self._views[path] = view
         
-        #apply physics materials for all envs except env_0
+        #apply physics materials
         if self._physics_material_spec is not None:
             self._apply_physics_materials(self._physics_material_spec)
 
-        self._set_camera()
-    
-    def get_observations(self, clone=True):
-        obs = {}
-        for name, (view, obs_type, joint_index) in self._observers.items():
-            obs[name] = self._read_property(view, obs_type, joint_indices=joint_index, clone=clone)
-        return obs
-    
-    def apply_action(self, action, env_indices=None):
-        kwargs = {'joint_indices': self._controlled_joints, self._action_type.value: action}
-        art_action = ArticulationActions(**kwargs)
-        self.robots.apply_action(art_action, indices=env_indices)
-
-    def get_observation_limits(self):
-        obs_low = []
-        obs_high = []
-        obs = self.get_observations()
-
-        for name, (_, obs_type, joint_index) in self._observers.items():
-            obs_count = ArrayBackend.get_array_backend(self._backend).size(obs[name][0, ...])
-
-            if obs_type == ObservationType.JOINT_POS:
-                limits = self.robots.get_dof_limits().to(TorchUtils.get_device())
-                obs_low.append(limits[0, joint_index, 0])
-                obs_high.append(limits[0, joint_index, 1])
-            elif obs_type == ObservationType.JOINT_VEL:
-                zero = ArrayBackend.get_array_backend(self._backend).zeros(1)
-                limit = self.robots.get_joint_max_velocities(indices=zero, joint_indices=joint_index)[0]
-                obs_low.append(-limit)
-                obs_high.append(limit)
-            else:
-                inf = ArrayBackend.get_array_backend(self._backend).inf()
-                obs_low.append(ArrayBackend.get_array_backend(self._backend).full((obs_count, ), -inf))
-                obs_high.append(ArrayBackend.get_array_backend(self._backend).full((obs_count, ), inf))
-
-        obs_low = ArrayBackend.get_array_backend(self._backend).concatenate(obs_low)
-        obs_high = ArrayBackend.get_array_backend(self._backend).concatenate(obs_high)
-
-        return obs_low, obs_high
-    
-    def get_joint_max_efforts(self):
-        return self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints)[0].to(self._device)
-    
-    def get_joint_pos_limits(self):
-        return self.robots.get_dof_limits()[0].to(self._device)[self._controlled_joints].T
-    
-    def get_joint_max_velocities(self):
-        return self.robots.get_joint_max_velocities(indices=[0], joint_indices=self._controlled_joints, clone=True)[0]
-
-    def get_action_limits(self):
-        if self._action_type == ActionType.EFFORT:
-            limit = self.get_joint_max_efforts()
-            return -limit, limit
-        elif self._action_type == ActionType.POSITION:
-            limit = self.get_joint_pos_limits()
-            return limit[0], limit[1]
-        else:
-            limit = self.get_joint_max_velocities()
-            return -limit, limit
-    
-    def reset_env(self, env_indices, state=None):
-        joints_defaults = self.robots.get_joints_default_state()
-        dof_pos = joints_defaults.positions[env_indices]
-        dof_vel = joints_defaults.velocities[env_indices]
-        dof_eff = joints_defaults.efforts[env_indices]
-
-        self.robots.set_joint_positions(dof_pos, indices=env_indices)
-        self.robots.set_joint_velocities(dof_vel, indices=env_indices)
-        self.robots.set_joint_efforts(dof_eff, indices=env_indices)
-
-        default_state = self.robots.get_default_state()
-        default_positions = default_state.positions[env_indices]
-        default_orientations = default_state.orientations[env_indices]
-        self.robots.set_world_poses(default_positions, default_orientations, indices=env_indices)
-        velocity = ArrayBackend.get_array_backend(self._backend).zeros((len(env_indices), 6))
-        self.robots.set_velocities(velocity, indices=env_indices)
-
     def post_reset(self):
         """
-        Called as the last step when resetting the world. 
+        Called as the last step when resetting the world.
         """
         self.collision_helper.post_reset()
 
         self._controlled_joints = []
-        for joint_name in self._action_spec:
+        for joint_name in self._actuation_spec:
             joint_index = self.robots.get_dof_index(joint_name)
             self._controlled_joints.append(joint_index)
         self._controlled_joints = torch.tensor(self._controlled_joints, device=self._device)
@@ -247,8 +195,162 @@ class IsaacSimTask(BaseTask):
                 view = self._views[path]
                 joint_index = None
             self._additionals[name] = (view, obs_type, joint_index)
+    
+    def get_observations(self, clone=True):
+        """
+        Retrieves the current observations from the environment.
 
-        #self.contact_view.initialize()
+        Args:
+            clone (bool, optional): If True, the observations are cloned to 
+                avoid in-place modifications. Defaults to True.
+
+        Returns:
+            A dictionary mapping observation names to their respective values
+        """
+        obs = {}
+        for name, (view, obs_type, joint_index) in self._observers.items():
+            obs[name] = self._read_property(view, obs_type, joint_indices=joint_index, clone=clone)
+        return obs
+    
+    def apply_action(self, action, env_indices=None):
+        """
+        Applies the given action to the controlled joints of the robot.
+
+        Args:
+            action (torch.tensor, np.ndarray): The action to be applied to the controlled joints. 
+            env_indices (torch.tensor, np.ndarray, none): The indices of the environments where 
+                the action should be applied. If None, the action is applied to all environments.
+        """
+        kwargs = {'joint_indices': self._controlled_joints, self._action_type.value: action}
+        art_action = ArticulationActions(**kwargs)
+        self.robots.apply_action(art_action, indices=env_indices)
+
+    def reset_env(self, env_indices):
+        """
+        Applies default values to joints and position, orientation and velocity of the robot.
+
+        Args:
+            env_indices (torch.tensor, np.ndarray, none): The indices of the environments where 
+                the action should be applied. If None, the action is applied to all environments.
+        """
+        joints_defaults = self.robots.get_joints_default_state()
+        dof_pos = joints_defaults.positions[env_indices]
+        dof_vel = joints_defaults.velocities[env_indices]
+        dof_eff = joints_defaults.efforts[env_indices]
+
+        self.robots.set_joint_positions(dof_pos, indices=env_indices)
+        self.robots.set_joint_velocities(dof_vel, indices=env_indices)
+        self.robots.set_joint_efforts(dof_eff, indices=env_indices)
+
+        default_state = self.robots.get_default_state()
+        default_positions = default_state.positions[env_indices]
+        default_orientations = default_state.orientations[env_indices]
+        self.robots.set_world_poses(default_positions, default_orientations, indices=env_indices)
+
+        velocity = ArrayBackend.get_array_backend(self._backend).zeros((len(env_indices), 6))
+        self.robots.set_velocities(velocity, indices=env_indices)
+
+    def get_observation_limits(self):
+        """
+        Computes the lower and upper limits for all observations.
+
+        Returns:
+            Two tensors or arrays: the first contains the lower limit, and the second contains the upper limit.
+        """
+        obs_low = []
+        obs_high = []
+        obs = self.get_observations()
+
+        for name, (_, obs_type, joint_index) in self._observers.items():
+            obs_count = ArrayBackend.get_array_backend(self._backend).size(obs[name][0, ...])
+
+            if obs_type == ObservationType.JOINT_POS:
+                limits = self.robots.get_dof_limits().to(TorchUtils.get_device())
+                obs_low.append(limits[0, joint_index, 0])
+                obs_high.append(limits[0, joint_index, 1])
+            elif obs_type == ObservationType.JOINT_VEL:
+                zero = ArrayBackend.get_array_backend(self._backend).zeros(1)
+                limit = self.robots.get_joint_max_velocities(indices=zero, joint_indices=joint_index)[0]
+                obs_low.append(-limit)
+                obs_high.append(limit)
+            else:
+                inf = ArrayBackend.get_array_backend(self._backend).inf()
+                obs_low.append(ArrayBackend.get_array_backend(self._backend).full((obs_count, ), -inf))
+                obs_high.append(ArrayBackend.get_array_backend(self._backend).full((obs_count, ), inf))
+
+        obs_low = ArrayBackend.get_array_backend(self._backend).concatenate(obs_low)
+        obs_high = ArrayBackend.get_array_backend(self._backend).concatenate(obs_high)
+
+        return obs_low, obs_high
+    
+    def get_action_limits(self):
+        """
+        Computes the lower and upper limits for all actions.
+
+        Returns:
+            Two tensors or arrays: the first contains the lower limit, and the second contains the upper limit.
+        """
+        if self._action_type == ActionType.EFFORT:
+            limit = self.get_joint_max_efforts()
+            return -limit, limit
+        elif self._action_type == ActionType.POSITION:
+            limit = self.get_joint_pos_limits()
+            return limit[0], limit[1]
+        else:
+            limit = self.get_joint_max_velocities()
+            return -limit, limit
+    
+    def get_joint_max_efforts(self):
+        """
+        Retrieves the maximum effort limits for the controlled joints.
+
+        Returns: 
+            A tensor or array containing the maximum effort values for each controlled joint.
+        """
+        return self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints)[0].to(self._device)
+    
+    def get_joint_pos_limits(self):
+        """
+        Retrieves the position limits for the controlled joints.
+
+        Returns: 
+            A tensor or array containing the position limits for each controlled joint.
+        """
+        return self.robots.get_dof_limits()[0].to(self._device)[self._controlled_joints].T
+    
+    def get_joint_max_velocities(self):
+        """
+        Retrieves the maximum velocity limits for the controlled joints.
+
+        Returns: 
+            A tensor or array containing the maximum velocity values for each controlled joint.
+        """
+        return self.robots.get_joint_max_velocities(indices=[0], joint_indices=self._controlled_joints, clone=True)[0]
+
+    def write_data(self, name, value, env_indices=None):
+        """
+        Sets v
+        """
+        if name in self._additionals:
+            view, obs_type, joint_index = self._additionals[name]
+        else:
+            view, obs_type, joint_index = self._observers[name]
+        self._set_property(view, obs_type, value, joint_indices=joint_index, env_indices=env_indices)
+
+    def read_data(self, name, env_indices=None):
+        if name in self._additionals:
+            view, obs_type, joint_index = self._additionals[name]
+        else:
+            view, obs_type, joint_index = self._observers[name]
+        return self._read_property(view, obs_type, joint_indices=joint_index, env_indices=env_indices)
+    
+    def set_joint_data(self, value, type, joint_indices=None, env_indices=None):
+        self._set_property(self.robots, type, value, joint_indices, env_indices)
+
+    def teleport_away(self, env_indices):
+        pos = self.env_pos[env_indices]
+        pos[:, 2] = -10
+        self.robots.set_world_poses(positions=pos, indices=env_indices)
 
     def _set_property(self, view, obs_type, value, joint_indices=None, env_indices=None):
         """
@@ -276,7 +378,7 @@ class IsaacSimTask(BaseTask):
 
     def _read_property(self, view, obs_type, joint_indices=None, env_indices=None, clone=True):
         if obs_type == ObservationType.BODY_POS:
-            return view.get_world_poses(indices=env_indices, clone=clone)[0] - self.env_pos #TODO maybe change to local_poses
+            return view.get_world_poses(indices=env_indices, clone=clone)[0] - self.env_pos
         elif obs_type == ObservationType.BODY_ROT:
             return view.get_world_poses(indices=env_indices, clone=clone)[1]
         elif obs_type == ObservationType.BODY_LIN_VEL:
@@ -294,27 +396,23 @@ class IsaacSimTask(BaseTask):
         elif obs_type == ObservationType.BODY_VEL:
             return view.get_velocities(indices=env_indices, clone=clone)
 
-    def write_data(self, name, value, env_indices=None):
-        if name in self._additionals:
-            view, obs_type, joint_index = self._additionals[name]
-        else:
-            view, obs_type, joint_index = self._observers[name]
-        self._set_property(view, obs_type, value, joint_indices=joint_index, env_indices=env_indices)
+    def _set_camera(self):
+        """Set up the camera in the simulation."""
+        viewport_api_2 = get_viewport_from_window_name("Viewport")
+        viewport_api_2.set_active_camera("/OmniverseKit_Persp")
 
-    def read_data(self, name, env_indices=None):
-        if name in self._additionals:
-            view, obs_type, joint_index = self._additionals[name]
-        else:
-            view, obs_type, joint_index = self._observers[name]
-        return self._read_property(view, obs_type, joint_indices=joint_index, env_indices=env_indices)
+        self.camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
+        self.camera_state.set_position_world(Gf.Vec3d(self._initial_camera_pos), True)
+        self.camera_state.set_target_world(Gf.Vec3d(self._initial_camera_target), True)
+
+        rp = rep.create.render_product("/OmniverseKit_Persp", (1280, 720))
+        self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
+        self.rgb_annot.attach(rp)
     
-    def set_joint_data(self, value, type, joint_indices=None, env_indices=None):
-        self._set_property(self.robots, type, value, joint_indices, env_indices)
-
-    def teleport_away(self, env_indices):
-        pos = self.env_pos[env_indices]
-        pos[:, 2] = -10
-        self.robots.set_world_poses(positions=pos, indices=env_indices)
+    def _create_light(self, stage, prim_path="/World/defaultDistantLight", intensity=1000):#maybe move to task
+        """Create a default light source in the scene."""
+        light = UsdLux.DistantLight.Define(stage, prim_path)
+        light.CreateIntensityAttr().Set(intensity)
 
     def _apply_physics_materials(self, values):
         """
@@ -335,5 +433,3 @@ class IsaacSimTask(BaseTask):
                 )
             view = GeometryPrimView(self.prim_paths[i] + "/Robot", reset_xform_properties=False)
             view.apply_physics_materials(materials[name])
-        
-        print("applied materials")

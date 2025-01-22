@@ -13,10 +13,10 @@ from mushroom_rl.utils.isaac_sim import ObservationHelper, ObservationType, Acti
 class IsaacSim(VectorizedEnvironment):
     # TODO add all relevant varibales from mujoco Constructur
     # TODO think about tasks
-    def __init__(self, usd_path, action_spec, observation_spec, backend, device, collision_between_envs, 
+    def __init__(self, usd_path, actuation_spec, observation_spec, backend, device, collision_between_envs, 
                  n_envs, env_spacing, gamma, horizon, timestep=None, n_substeps=1, n_intermediate_steps=1, 
                  additional_data_spec=None, collision_groups=None, action_type=ActionType.EFFORT, headless=True,
-                 physics_material_spec=None):
+                 physics_material_spec=None, sim_params=None, camera_position=(5, 0, 4), camera_target=(0, 0, 0)):
         """
         Constructor.
 
@@ -42,6 +42,7 @@ class IsaacSim(VectorizedEnvironment):
             collision_groups (dict, optional): Collision groups configuration.
             action_type (ActionType): Type of action (effort, position, velocity).
             headless (bool): Whether to run in headless mode.
+            sim_params (dict)
         """
         self._headless = headless
         self._simulation_app = SimulationApp({"headless": headless, "hide_ui": False}) 
@@ -58,18 +59,19 @@ class IsaacSim(VectorizedEnvironment):
         self._n_substeps = n_substeps
 
         # Initialize world and tasks
-        self._create_world(timestep)
-        self._create_light()
+        self._create_world(timestep, sim_params)
         self._set_task(
             usd_path, 
             n_envs, 
             env_spacing, 
             collision_between_envs, 
             observation_spec, 
-            action_spec, 
+            actuation_spec, 
             additional_data_spec, 
             collision_groups,
-            physics_material_spec
+            physics_material_spec, 
+            camera_position,
+            camera_target
         )
         self._world.reset()
 
@@ -96,42 +98,28 @@ class IsaacSim(VectorizedEnvironment):
         carb.settings.get_settings().set("/app/viewport/grid/enabled", False)
         carb.settings.get_settings().set("/app/runLoops/main/rateLimitEnabled", False)
 
-    def _create_world(self, timestep):
+    def _create_world(self, timestep, custom_sim_params=None):
         """Create and configure the simulation world."""
         from omni.isaac.core.world import World
+
+        sim_params = {
+            'gravity': [0.0, 0.0, -9.81], 
+            'use_gpu_pipeline': True, 
+            'use_fabric': True, 
+            'enable_scene_query_support': True, 
+            'use_gpu': True
+        }
+        if custom_sim_params is not None:
+            sim_params.update(custom_sim_params)
 
         self._world = World(
             stage_units_in_meters=1.0,
             rendering_dt=1.0 / 60.0,
-            backend="torch",
-            device="cuda:0",
-            sim_params={
-                'gravity': [0.0, 0.0, -9.81], 
-                'use_gpu_pipeline': True, 
-                'use_fabric': True, 
-                'enable_scene_query_support': True, 
-                'use_gpu': True}
+            backend=self._backend,
+            device=self._device,
+            sim_params=sim_params
         )
         self._physics_context = self._world.get_physics_context()
-        self._physics_context.set_gpu_found_lost_aggregate_pairs_capacity(128 * 1024)
-        self._physics_context.set_gpu_total_aggregate_pairs_capacity(128*1024)
-        self._physics_context.set_gpu_temp_buffer_capacity(16777216)
-
-        self._physics_context.set_gpu_max_rigid_patch_count(2 * 81920)
-
-        """
-        self._physics_context.set_gpu_max_rigid_contact_count(524288)
-        self._physics_context.set_gpu_max_rigid_patch_count(81920)
-        self._physics_context.set_gpu_found_lost_pairs_capacity(8192)
-        self._physics_context.set_gpu_found_lost_aggregate_pairs_capacity(262144)
-        self._physics_context.set_gpu_total_aggregate_pairs_capacity(8192)
-        self._physics_context.set_gpu_max_soft_body_contacts(1048576)
-        self._physics_context.set_gpu_max_particle_contacts(1048576)
-        self._physics_context.set_gpu_heap_capacity(67108864)
-        self._physics_context.set_gpu_temp_buffer_capacity(16777216)
-        self._physics_context.set_gpu_max_num_partitions(8)
-        """
-
         self._physics_context.enable_gpu_dynamics(True)
 
         if timestep is None:
@@ -144,25 +132,15 @@ class IsaacSim(VectorizedEnvironment):
         self._world.set_simulation_dt(rendering_dt=self.dt)
         print(f"rendering dt: {self._world.get_rendering_dt()}, physix dt: {self._world.get_physics_dt()}")
 
-    def _create_light(self, prim_path="/World/defaultDistantLight", intensity=1000):#maybe move to task
-        """Create a default light source in the scene."""
-        from omni.isaac.core.utils.stage import get_current_stage
-        from pxr import UsdLux
-
-        stage = get_current_stage()
-        light = UsdLux.DistantLight.Define(stage, prim_path)
-        light.CreateIntensityAttr().Set(intensity)
-
-    def _set_task(self, usd_path, n_envs, env_spacing, collision_between_envs, observation_spec, action_spec, 
-                  additional_data_spec, collision_groups, physics_material_spec):
+    def _set_task(self, usd_path, n_envs, env_spacing, collision_between_envs, observation_spec, actuation_spec, 
+                  additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target):
         """Set up the simulation task."""
         from mushroom_rl.environments.isaac_sim_task import IsaacSimTask
 
         self._task = IsaacSimTask(
-            self._physics_context, usd_path, n_envs, env_spacing, collision_between_envs, 
-            observation_spec, action_spec, additional_data_spec, collision_groups, 
-            self._backend, self._action_type, self._n_intermediate_steps, self._device,
-            physics_material_spec
+            self._physics_context, usd_path, n_envs, env_spacing, observation_spec, actuation_spec, 
+            self._backend, self._device, self._action_type, collision_between_envs, additional_data_spec, 
+            collision_groups, physics_material_spec, camera_position, camera_target
         )
         self._world.add_task(self._task)
 
@@ -225,7 +203,7 @@ class IsaacSim(VectorizedEnvironment):
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
         env_indices = arr_backend.where(env_mask)[0]
 
-        self._task.reset_env(env_indices, state)
+        self._task.reset_env(env_indices)
         self.setup(env_indices, state)
         
         obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
@@ -236,61 +214,6 @@ class IsaacSim(VectorizedEnvironment):
         obs = self._modify_observation(obs)
 
         return obs.clone().detach(), info
-    
-    def _create_observation(self, obs):
-        return obs
-
-    def _modify_observation(self, obs):
-        """
-        This method can be overridden to edit the created observation. This is done after the reward and absorbing
-        functions are evaluated. Especially useful to transform the observation into different frames. If the original
-        observation order is not preserved, the helper functions in ObervationHelper breaks.
-
-        Args:
-            obs (np.ndarray): the generated observation
-
-        Returns:
-            The environment observation.
-
-        """
-        return obs
-
-    def seed(self, seed=-1):
-        from omni.isaac.core.utils.torch.maths import set_seed
-        return set_seed(seed)
-    
-    def stop(self):
-        if self._viewer is not None:
-            self._viewer.close()
-            self._viewer = None
-        #self._world.reset() #leads sometimes to an illegal cuda memory access
-        #self._task.reset_env(list(range(self.number)))
-        self._world.reset(soft=True)
-
-    def __del__(self):
-        if self._viewer is not None:
-            self._viewer.close()
-            self._viewer = None
-        self._simulation_app.close()
-
-    @property
-    def dt(self):
-        return self._timestep * self._n_intermediate_steps * self._n_substeps
-    
-    def _compute_action(self, obs, action):
-        """
-        Compute a transformation of the action at every intermediate step.
-        Useful to add control signals simulated directly in python.
-
-        Args:
-            obs (np.ndarray): numpy array with the current state of teh simulation;
-            action (np.ndarray): numpy array with the actions, provided at every step.
-
-        Returns:
-            The action to be set in the actual pybullet simulation.
-
-        """
-        return action
     
     def reward(self, obs, action, next_obs, absorbing):
         """
@@ -329,6 +252,28 @@ class IsaacSim(VectorizedEnvironment):
 
         """
         raise NotImplementedError
+
+    def seed(self, seed=-1):
+        from omni.isaac.core.utils.torch.maths import set_seed
+        return set_seed(seed)
+    
+    def stop(self):
+        if self._viewer is not None:
+            self._viewer.close()
+            self._viewer = None
+        #self._world.reset() #leads sometimes to an illegal cuda memory access
+        #self._task.reset_env(list(range(self.number)))
+        self._world.reset(soft=True)
+
+    def __del__(self):
+        if self._viewer is not None:
+            self._viewer.close()
+            self._viewer = None
+        self._simulation_app.close()
+
+    @property
+    def dt(self):
+        return self._timestep * self._n_intermediate_steps * self._n_substeps
     
     def _check_collision(self, group1, group2, threshold=0., selector=None, dt=1.):
         """
@@ -352,13 +297,14 @@ class IsaacSim(VectorizedEnvironment):
 
     def _get_collision_force(self, group1, group2, selector=None, dt=1.):
         """
-        Returns the collision force and torques between the specified groups.
+        Returns the collision force or impulse between the specified groups.
 
         Args:
             group1 (string): A name referring to an entry contained in the
                 collision_groups list handed to the constructor;
             group2 (string): A name referring to an entry contained in the
                 collision_groups list handed to the constructor.
+            selector (Callable[[torch.tensor | np.ndarray], torch.tensor | np.ndarray]): 
 
         Returns:
             A 3D vector specifying the collision forces
@@ -383,6 +329,52 @@ class IsaacSim(VectorizedEnvironment):
     def _set_joint_data(self, value, type, joint_indices=None, env_indices=None):
         assert type == ObservationType.JOINT_POS or type == ObservationType.JOINT_VEL
         self._task.set_joint_data(value, type, joint_indices, env_indices)
+
+    # callbacks ------------------------------------------------------------------------------------------
+
+    def _create_observation(self, obs):
+        """
+        This method can be overridden to create a custom observation. Should be used to append observation which have
+        been registered via observation_helper.add_obs(self, name, length, min_value, max_value)
+
+        Args:
+            obs (np.ndarray, torch.tensor): the generated observation
+
+        Returns:
+            The environment observation.
+
+        """
+        return obs
+
+    def _modify_observation(self, obs):
+        """
+        This method can be overridden to edit the created observation. This is done after the reward and absorbing
+        functions are evaluated. Especially useful to transform the observation into different frames. If the original
+        observation order is not preserved, the helper functions in ObervationHelper breaks.
+
+        Args:
+            obs (np.ndarray, torch.tensor): the generated observation
+
+        Returns:
+            The environment observation.
+
+        """
+        return obs
+    
+    def _compute_action(self, obs, action):
+        """
+        Compute a transformation of the action at every intermediate step.
+        Useful to add control signals simulated directly in python.
+
+        Args:
+            obs (np.ndarray, torch.tensor): current state of the simulation;
+            action (np.ndarray, torch.tensor): the actions, provided at every step.
+
+        Returns:
+            The action to be set in the actual pybullet simulation.
+
+        """
+        return action
         
     def _preprocess_action(self, action):
         """
@@ -390,8 +382,7 @@ class IsaacSim(VectorizedEnvironment):
         environment.
 
         Args:
-            action (np.ndarray): numpy array with the actions
-                provided to the environment.
+            action (np.ndarray, torch.tensor): the actions provided to the environment.
 
         Returns:
             The action to be used for the current step
@@ -417,7 +408,7 @@ class IsaacSim(VectorizedEnvironment):
         This method can be overridden to create a custom info dictionary.
 
         Args:
-            obs (np.ndarray): the generated observation
+            obs (np.ndarray, torch.tensor): the generated observation
 
         Returns:
             The information dictionary.
@@ -428,21 +419,15 @@ class IsaacSim(VectorizedEnvironment):
     def _simulation_pre_step(self):
         """
         Allows information to be accesed and changed at every intermediate step
-        before taking a step in the mujoco simulation.
+        before taking a step in the isaac sim simulation.
         Can be usefull to apply an external force/torque to the specified bodies.
-
-        ex: apply a force over X to the torso:
-        force = [200, 0, 0]
-        torque = [0, 0, 0]
-        self.sim.data.xfrc_applied[self.sim.model._body_name2id["torso"],:] = force + torque
-
         """
         pass
 
     def _simulation_post_step(self):
         """
         Allows information to be accesed at every intermediate step
-        after taking a step in the mujoco simulation.
+        after taking a step in the isaac sim simulation.
         Can be usefull to average forces over all intermediate steps.
 
         """

@@ -81,10 +81,17 @@ class IsaacA1Description(IsaacSim):
         collision_between_envs = False
         env_spacing = 3.
         physics_material_spec = self._get_values_for_physics_materials(num_envs)
+        sim_params = {
+            "gpu_found_lost_aggregate_pairs_capacity": 128*1024, 
+            "gpu_total_aggregate_pairs_capacity": 128*1024, 
+            "gpu_temp_buffer_capacity": 16777216,
+            "gpu_max_rigid_patch_count": 2 * 81920
+        }
         super().__init__(usd_path, self._action_spec, observation_spec, backend, device, collision_between_envs, num_envs, 
                          env_spacing, 0.99, horizon, additional_data_spec=additional_data_spec, collision_groups=collision_groups, 
                          action_type=ActionType.EFFORT, headless=headless, n_intermediate_steps=4, timestep=0.005, 
-                         physics_material_spec=physics_material_spec) 
+                         physics_material_spec=physics_material_spec, sim_params=sim_params, camera_position=(105, 0, 4), 
+                         camera_target=(95, 0, 0)) 
         self._mdp_info.action_space = Box(*((self._task.get_joint_pos_limits() - self._default_joint_angles) / 0.25))
         
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)

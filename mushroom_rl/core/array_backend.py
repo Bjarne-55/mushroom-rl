@@ -175,6 +175,18 @@ class ArrayBackend(object):
     @staticmethod
     def minimum(x, y):
         raise NotImplementedError
+    
+    @staticmethod
+    def max(array, dim=None):
+        raise NotImplementedError
+    
+    @staticmethod
+    def min(array, dim=None):
+        raise NotImplementedError
+    
+    @staticmethod
+    def norm(array, dim=None):
+        raise NotImplementedError
 
 
 class NumpyBackend(ArrayBackend):
@@ -312,6 +324,18 @@ class NumpyBackend(ArrayBackend):
     @staticmethod
     def minimum(x, y):
         return np.minimum(x, y)
+    
+    @staticmethod
+    def max(array, dim=None):
+        return np.max(array, axis=dim)
+    
+    @staticmethod
+    def min(array, dim=None):
+        return np.min(array, axis=dim)
+    
+    @staticmethod
+    def norm(array, ord=None, dim=None):
+        return np.linalg.norm(array, ord=ord, axis=dim)
 
 
 class TorchBackend(ArrayBackend):
@@ -457,6 +481,18 @@ class TorchBackend(ArrayBackend):
     @staticmethod
     def minimum(x, y):
         return torch.minimum(x, y)
+    
+    @staticmethod
+    def max(array, dim):
+        return torch.max(array, dim=dim).values
+    
+    @staticmethod
+    def min(array, dim):
+        return torch.min(array, dim=dim).values
+    
+    @staticmethod
+    def norm(array, ord=None, dim=None):
+        return torch.linalg.norm(array, ord=ord, dim=dim)
 
 class ListBackend(ArrayBackend):
 
@@ -542,3 +578,15 @@ class ListBackend(ArrayBackend):
     @staticmethod
     def minimum(x, y):
         return np.minimum(x, y)
+    
+    @staticmethod
+    def max(array, dim):
+        return np.max(array, axis=dim)
+    
+    @staticmethod
+    def min(array, dim):
+        return np.min(array, axis=dim)
+    
+    @staticmethod
+    def norm(array, ord=None, dim=None):
+        return np.linalg.norm(array, ord=ord, axis=dim)
