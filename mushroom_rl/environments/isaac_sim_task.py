@@ -329,7 +329,11 @@ class IsaacSimTask(BaseTask):
 
     def write_data(self, name, value, env_indices=None):
         """
-        Sets v
+        Writes data to isaac sim.
+
+        Args: 
+            name (str): A name referring to an entry contained in additional_data_spec or observation_spec.
+            value (torch.tensor, np.ndarra): The data that should be written.
         """
         if name in self._additionals:
             view, obs_type, joint_index = self._additionals[name]
@@ -338,6 +342,15 @@ class IsaacSimTask(BaseTask):
         self._set_property(view, obs_type, value, joint_indices=joint_index, env_indices=env_indices)
 
     def read_data(self, name, env_indices=None):
+        """
+        Read data from isaac sim.
+
+        Args: 
+            name (str): A name referring to an entry contained in additional_data_spec or observation_spec.
+
+        Returns:
+            The desired data as a tensor or array.
+        """
         if name in self._additionals:
             view, obs_type, joint_index = self._additionals[name]
         else:
@@ -345,16 +358,44 @@ class IsaacSimTask(BaseTask):
         return self._read_property(view, obs_type, joint_indices=joint_index, env_indices=env_indices)
     
     def set_joint_data(self, value, type, joint_indices=None, env_indices=None):
+        """
+        Sets the joint properties for the specified joints and environments.
+
+        Args:
+            value (torch.tensor, np.ndarray): The value to set for the specified joint property.
+            type (ObservationType): The type of joint property to be set (e.g., "position", "velocity").
+            joint_indices (torch.tensor, np.ndarray, list[int], optional): The indices of the joints to update.
+                If None, defaults to the controlled joints.
+            env_indices (torch.tensor, np.ndarray, list[int], optional): The indices of the environments where
+                the joint data should be updated. If None, applies to all environments.
+        """
+        if joint_indices is None:
+            joint_indices = self._controlled_joints
         self._set_property(self.robots, type, value, joint_indices, env_indices)
 
     def teleport_away(self, env_indices):
+        """
+        Teleports robots away by setting their Z-coordinate to -10. This speeds up computation 
+        when not all environments are used, as fewer collisions need to be processed.
+
+        Args:
+            env_indices (torch.tensor, np.ndarray, list[int]): The indices of the environments to teleport.
+        """
         pos = self.env_pos[env_indices]
         pos[:, 2] = -10
         self.robots.set_world_poses(positions=pos, indices=env_indices)
 
     def _set_property(self, view, obs_type, value, joint_indices=None, env_indices=None):
         """
-        Will set values immediately
+        Sets the specified property values immediately.
+
+        Args:
+            view: The isaac sim view where the properties should be set.
+            obs_type (ObservationType): The type of observation to update.
+            value (torch.tensor, np.ndarray): The new values to be assigned.
+            joint_indices (torch.tensor, np.ndarray, list[int], optional): The joint indices to be updated.
+            env_indices (torch.tensor, np.ndarray, list[int], optional): The environment indices to apply 
+                the update.
         """
         if obs_type == ObservationType.BODY_POS:
             pos = value + self.env_pos[env_indices]
@@ -366,17 +407,26 @@ class IsaacSimTask(BaseTask):
         elif obs_type == ObservationType.BODY_ANG_VEL:
             view.set_angular_velocities(value, indices=env_indices)
         elif obs_type == ObservationType.JOINT_POS:
-            if joint_indices is None:
-                joint_indices = self._controlled_joints
             view.set_joint_positions(value, indices=env_indices, joint_indices=joint_indices)
         elif obs_type == ObservationType.JOINT_VEL:
-            if joint_indices is None:
-                joint_indices = self._controlled_joints
             view.set_joint_velocities(value, indices=env_indices, joint_indices=joint_indices)
         elif obs_type == ObservationType.BODY_VEL:
             view.set_velocities(value, indices=env_indices)
 
     def _read_property(self, view, obs_type, joint_indices=None, env_indices=None, clone=True):
+        """
+        Retrieves a specific property from the given view based on the observation type.
+
+        Args:
+            view: The view object that provides access to simulation data.
+            obs_type (ObservationType): The type of observation to retrieve. 
+            joint_indices (torch.tensor, np.ndarray, list[int], optional): Indices of the joints 
+                for which to retrieve data. Only used for joint-related observation types.
+            env_indices (torch.tensor, np.ndarray, list[int], optional): Indices of the environments for 
+                which to retrieve data.
+            clone (bool, optional): Whether to return a cloned copy of the retrieved data. Defaults to True.
+
+        """
         if obs_type == ObservationType.BODY_POS:
             return view.get_world_poses(indices=env_indices, clone=clone)[0] - self.env_pos
         elif obs_type == ObservationType.BODY_ROT:
@@ -386,18 +436,16 @@ class IsaacSimTask(BaseTask):
         elif obs_type == ObservationType.BODY_ANG_VEL:
             return view.get_velocities(indices=env_indices, clone=clone)[:, 3:]
         elif obs_type == ObservationType.JOINT_POS:
-            if joint_indices is None:
-                joint_indices = self._controlled_joints
             return view.get_joint_positions(indices=env_indices, joint_indices=joint_indices, clone=clone)
         elif obs_type == ObservationType.JOINT_VEL:
-            if joint_indices is None:
-                joint_indices = self._controlled_joints
             return view.get_joint_velocities(indices=env_indices, joint_indices=joint_indices, clone=clone)
         elif obs_type == ObservationType.BODY_VEL:
             return view.get_velocities(indices=env_indices, clone=clone)
 
     def _set_camera(self):
-        """Set up the camera in the simulation."""
+        """
+        Initializes and positions the camera in the simulation.
+        """
         viewport_api_2 = get_viewport_from_window_name("Viewport")
         viewport_api_2.set_active_camera("/OmniverseKit_Persp")
 
@@ -409,16 +457,22 @@ class IsaacSimTask(BaseTask):
         self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
         self.rgb_annot.attach(rp)
     
-    def _create_light(self, stage, prim_path="/World/defaultDistantLight", intensity=1000):#maybe move to task
+    def _create_light(self, stage, prim_path="/World/defaultDistantLight", intensity=1000):
         """Create a default light source in the scene."""
         light = UsdLux.DistantLight.Define(stage, prim_path)
         light.CreateIntensityAttr().Set(intensity)
 
     def _apply_physics_materials(self, values):
         """
+        Creates and assigns physics materials to the robot geometries based on the provided 
+        material properties.
+
         Args:
-            values (list of tuple)
-            paths (list,):
+            values (list of tuples): A list where each entry is a tuple containing:
+                - name (str): The name of the physics material.
+                - dynamic_friction (float): The dynamic friction coefficient.
+                - static_friction (float): The static friction coefficient.
+                - restitution (float): The restitution coefficient.
         """
         materials = {}
         for i, (name, dynamic_friction, static_friction, restitution) in enumerate(values):
