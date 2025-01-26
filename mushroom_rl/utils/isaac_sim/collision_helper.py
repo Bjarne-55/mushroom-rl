@@ -7,7 +7,7 @@ class CollisionHelper:
     TEMPLATE_ENV_PATH = BASE_ENV_PATH + "/env"
     ZERO_ENV_PATH = TEMPLATE_ENV_PATH + "_0"
 
-    def __init__(self, collision_groups, backend, num_envs, device):
+    def __init__(self, collision_groups, backend, num_envs, device, n_intermediate_steps = 1):
         """
         Constructor.
 
@@ -18,12 +18,14 @@ class CollisionHelper:
             backend (str): name of the backend for array operations.
             n_envs (int): Number of parallel environments.
             device (str): Compute device (e.g., 'cuda:0').
+            n_intermediate_steps (int): Number of intermediate control steps. Defaults to 1.
         """
         self._backend = backend
         self._device = device
         self._num_envs = num_envs
         self.collision_groups = {key: group for key, group in collision_groups} if collision_groups is not None else {}
         self._first_set_up = True
+        self._n_intermediate_steps = n_intermediate_steps
 
     def prepare_env(self, stage):
         """
@@ -44,13 +46,14 @@ class CollisionHelper:
                 if not prim.HasAPI(PhysxSchema.PhysxContactReportAPI):
                     PhysxSchema.PhysxContactReportAPI.Apply(prim)
 
-    def set_up(self):
+    def set_up(self):#TODO check if possible One ContactView per Group
         """
         Sets up RigidContactViews for all object of all collisions groups
         """
         from omni.isaac.core.prims import RigidContactView
 
         self._views = {}
+        self._collision_force_buffer = {}
         self._collision_groups_indices = {}
         self._collision_group_contains_world = {key: False for key in self.collision_groups}
 
@@ -58,7 +61,7 @@ class CollisionHelper:
             possible_partners = reduce(
                 lambda acc, val: acc + val if val not in acc else acc, [value for key, value in self.collision_groups.items() if key != group_name], []
             )
-            self._collision_groups_indices[group_name] = {key: torch.tensor([possible_partners.index(value) for value in self.collision_groups[key]], device=self._device) for key in self.collision_groups if key != group_name}
+            self._collision_groups_indices[group_name] = {key: self._arr_backend.from_list([possible_partners.index(value) for value in self.collision_groups[key]]) for key in self.collision_groups if key != group_name}
             possible_partners = [self.BASE_ENV_PATH + "/.*/Robot" + partner if not partner.startswith("/World/") else partner for partner in possible_partners]
             for path in group:
                 if path in self._views:
@@ -73,6 +76,7 @@ class CollisionHelper:
                     prepare_contact_sensors=False
                 )
                 self._views[path] = view
+                self._collision_force_buffer[path] = self._arr_backend.zeros((self._n_intermediate_steps, self._num_envs, len(possible_partners), 3), device=self._device)
     
     def post_reset(self):
         """
@@ -82,7 +86,17 @@ class CollisionHelper:
             for path in self._views:
                 self._views[path].initialize()
             self._first_set_up = False
-            
+
+        self.index = 0
+
+    def gather_collisions(self):#TODO check Buffer
+        """
+        Buffers the collisions forces of all views at every intermediate steps.
+        """
+        for path, view in self._views.items():
+            self._collision_force_buffer[path][self.index] = view.get_contact_force_matrix(clone=True)
+        
+        self.index = (self.index + 1) % self._n_intermediate_steps
 
     def get_collision_force(self, group1, group2, selector=None, dt=1.0):
         """
@@ -91,7 +105,7 @@ class CollisionHelper:
         Args:
             group1 (str): The name of the first collision group.
             group2 (str): The name of the second collision group.
-            selector (Callable[[torch.tensor | np.ndarray], torch.Tensor | np.ndarray], optional): 
+            selector (Callable[[torch.tensor | np.ndarray], torch.tensor | np.ndarray], optional): 
                 A function that processes the collision force tensor. 
                 Defaults to selecting the maximum force of each environment
             dt (float, optional): The time step duration used for computing forces. 
@@ -102,7 +116,7 @@ class CollisionHelper:
             processed by the `selector` function.
         """
         if selector is None:
-            selector = lambda x: self._arr_backend.max(self._arr_backend.norm(x, dim=2), dim=1)
+            selector = lambda x: self._arr_backend.max(self._arr_backend.max(self._arr_backend.norm(x, dim=3), dim=2), dim=0)
 
         if self._collision_group_contains_world[group2]:
             prims = self.collision_groups[group1]
@@ -111,7 +125,7 @@ class CollisionHelper:
             prims = self.collision_groups[group2]
             indices_prims2 = self._collision_groups_indices[group2][group1]
         
-        forces = torch.cat([self._views[p].get_contact_force_matrix(clone=False, dt=dt)[:, indices_prims2] for p in prims], dim=1)
+        forces = self._arr_backend.concatenate([self._collision_force_buffer[p][:, :, indices_prims2] / dt for p in prims], dim=2)
 
         return selector(forces)
     
@@ -157,10 +171,10 @@ class CollisionHelper:
             A tensor or array containing the count of collisions
         """
         if selector is None:
-            selector=lambda x: self._arr_backend.norm(x, dim=2)
+            selector=lambda x: self._arr_backend.max(self._arr_backend.norm(x, dim=3), dim=0)
 
         forces = self.get_collision_force(group1, group2, selector, dt)
-        return torch.sum(forces > threshold, dim=1)
+        return self._arr_backend.sum(forces > threshold, dim=1)
     
     @property
     def _arr_backend(self):

@@ -31,9 +31,9 @@ class IsaacSimTask(BaseTask):
     ZERO_ENV_PATH = TEMPLATE_ENV_PATH + "_0"
 
     def __init__(self, physic_context, usd_path, num_envs, env_spacing, observation_spec, actuation_spec, backend, 
-                 device, action_type=ActionType.EFFORT, collision_between_envs=False, additional_data_spec=None, 
-                 collision_groups=None, physics_material_spec=None, camera_position=(5, 0, 4), 
-                 camera_target=(0, 0, 0)):
+                 device, action_type=ActionType.EFFORT, n_intermediate_steps=1, collision_between_envs=False, 
+                 additional_data_spec=None, collision_groups=None, physics_material_spec=None, 
+                 camera_position=(5, 0, 4), camera_target=(0, 0, 0)):
         """
         Constructor.
 
@@ -51,8 +51,9 @@ class IsaacSimTask(BaseTask):
             backend (str): name of the backend for array operations.
             device (str): Compute device (e.g., 'cuda:0').
             action_type (ActionType): Control type of the joints (effort, position, velocity).
+            n_intermediate_steps (int): Number of intermediate control steps. Defaults to 1.
             collision_between_envs (bool): Whether inter-environment collisions are allowed.
-            additional_data_spec (list): A list containing the data fields of interest, which should be read from
+            additional_data_spec (list, None): A list containing the data fields of interest, which should be read from
                or written to during simulation. The entries are given as the following tuples: (key, path, type) key
                is a string for later referencing in the "read_data" and "write_data" methods.
             collision_groups (list, None): A list containing groups of prims for which collisions should be checked during
@@ -79,7 +80,7 @@ class IsaacSimTask(BaseTask):
         self._initial_camera_pos = camera_position
         self._initial_camera_target = camera_target
 
-        self.collision_helper = CollisionHelper(collision_groups, backend, num_envs, device)
+        self.collision_helper = CollisionHelper(collision_groups, backend, num_envs, device, n_intermediate_steps)
 
         super().__init__("MushroomTask")
 
@@ -171,30 +172,27 @@ class IsaacSimTask(BaseTask):
             self._controlled_joints.append(joint_index)
         self._controlled_joints = torch.tensor(self._controlled_joints, device=self._device)
 
-        self._observers = {}
-        for name, path, obs_type in self._observation_spec:
+        self._observers = self._create_observer_tuple(self._observation_spec)
+        self._additionals = self._create_observer_tuple(self._additional_data_spec)
+
+    def _create_observer_tuple(self, spec):
+        mapping = {}
+        for name, path, obs_type in spec:
             if obs_type.is_joint():
                 view = self.robots
                 joint_name = path.split('/')[-1]
-                joint_index = self.robots.get_dof_index(joint_name)
-                joint_index = ArrayBackend.get_array_backend(self._backend).from_list([joint_index])
-            else:
-                view = self._views[path]
-                joint_index = None
-
-            self._observers[name] = (view, obs_type, joint_index)
-
-        self._additionals = {}
-        for name, path, obs_type in self._additional_data_spec:
-            if obs_type.is_joint():
+                element_idx = self.robots.get_dof_index(joint_name)
+                element_idx = self._arr_backend.from_list([element_idx])
+            elif obs_type.is_sub_body():
                 view = self.robots
-                joint_name = path.split('/')[-1]
-                joint_index = self.robots.get_dof_index(joint_name)
-                joint_index = ArrayBackend.get_array_backend(self._backend).from_list([joint_index])
+                body_name = path.split('/')[-1]
+                element_idx = self.robots.get_body_index(body_name)
+                element_idx = self._arr_backend.from_list([element_idx])
             else:
                 view = self._views[path]
-                joint_index = None
-            self._additionals[name] = (view, obs_type, joint_index)
+                element_idx = None
+            mapping[name] = (view, obs_type, element_idx)
+        return mapping
     
     def get_observations(self, clone=True):
         """
@@ -208,8 +206,8 @@ class IsaacSimTask(BaseTask):
             A dictionary mapping observation names to their respective values
         """
         obs = {}
-        for name, (view, obs_type, joint_index) in self._observers.items():
-            obs[name] = self._read_property(view, obs_type, joint_indices=joint_index, clone=clone)
+        for name, (view, obs_type, element_idx) in self._observers.items():
+            obs[name] = self._read_property(view, obs_type, element_idx=element_idx, clone=clone)
         return obs
     
     def apply_action(self, action, env_indices=None):
@@ -247,7 +245,7 @@ class IsaacSimTask(BaseTask):
         default_orientations = default_state.orientations[env_indices]
         self.robots.set_world_poses(default_positions, default_orientations, indices=env_indices)
 
-        velocity = ArrayBackend.get_array_backend(self._backend).zeros((len(env_indices), 6))
+        velocity = self._arr_backend.zeros((len(env_indices), 6))
         self.robots.set_velocities(velocity, indices=env_indices)
 
     def get_observation_limits(self):
@@ -262,24 +260,24 @@ class IsaacSimTask(BaseTask):
         obs = self.get_observations()
 
         for name, (_, obs_type, joint_index) in self._observers.items():
-            obs_count = ArrayBackend.get_array_backend(self._backend).size(obs[name][0, ...])
+            obs_count = self._arr_backend.size(obs[name][0, ...])
 
             if obs_type == ObservationType.JOINT_POS:
                 limits = self.robots.get_dof_limits().to(TorchUtils.get_device())
                 obs_low.append(limits[0, joint_index, 0])
                 obs_high.append(limits[0, joint_index, 1])
             elif obs_type == ObservationType.JOINT_VEL:
-                zero = ArrayBackend.get_array_backend(self._backend).zeros(1)
+                zero = self._arr_backend.zeros(1)
                 limit = self.robots.get_joint_max_velocities(indices=zero, joint_indices=joint_index)[0]
                 obs_low.append(-limit)
                 obs_high.append(limit)
             else:
-                inf = ArrayBackend.get_array_backend(self._backend).inf()
-                obs_low.append(ArrayBackend.get_array_backend(self._backend).full((obs_count, ), -inf))
-                obs_high.append(ArrayBackend.get_array_backend(self._backend).full((obs_count, ), inf))
+                inf = self._arr_backend.inf()
+                obs_low.append(self._arr_backend.full((obs_count, ), -inf))
+                obs_high.append(self._arr_backend.full((obs_count, ), inf))
 
-        obs_low = ArrayBackend.get_array_backend(self._backend).concatenate(obs_low)
-        obs_high = ArrayBackend.get_array_backend(self._backend).concatenate(obs_high)
+        obs_low = self._arr_backend.concatenate(obs_low)
+        obs_high = self._arr_backend.concatenate(obs_high)
 
         return obs_low, obs_high
     
@@ -336,10 +334,10 @@ class IsaacSimTask(BaseTask):
             value (torch.tensor, np.ndarra): The data that should be written.
         """
         if name in self._additionals:
-            view, obs_type, joint_index = self._additionals[name]
+            view, obs_type, element_idx = self._additionals[name]
         else:
-            view, obs_type, joint_index = self._observers[name]
-        self._set_property(view, obs_type, value, joint_indices=joint_index, env_indices=env_indices)
+            view, obs_type, element_idx = self._observers[name]
+        self._set_property(view, obs_type, value, element_idx=element_idx, env_indices=env_indices)
 
     def read_data(self, name, env_indices=None):
         """
@@ -352,26 +350,26 @@ class IsaacSimTask(BaseTask):
             The desired data as a tensor or array.
         """
         if name in self._additionals:
-            view, obs_type, joint_index = self._additionals[name]
+            view, obs_type, element_idx = self._additionals[name]
         else:
-            view, obs_type, joint_index = self._observers[name]
-        return self._read_property(view, obs_type, joint_indices=joint_index, env_indices=env_indices)
+            view, obs_type, element_idx = self._observers[name]
+        return self._read_property(view, obs_type, element_idx=element_idx, env_indices=env_indices)
     
-    def set_joint_data(self, value, type, joint_indices=None, env_indices=None):
+    def set_joint_data(self, value, type, element_idx=None, env_indices=None):
         """
         Sets the joint properties for the specified joints and environments.
 
         Args:
             value (torch.tensor, np.ndarray): The value to set for the specified joint property.
             type (ObservationType): The type of joint property to be set (e.g., "position", "velocity").
-            joint_indices (torch.tensor, np.ndarray, list[int], optional): The indices of the joints to update.
+            element_idx (torch.tensor, np.ndarray, list[int], optional): The indices of the joints to update.
                 If None, defaults to the controlled joints.
             env_indices (torch.tensor, np.ndarray, list[int], optional): The indices of the environments where
                 the joint data should be updated. If None, applies to all environments.
         """
-        if joint_indices is None:
-            joint_indices = self._controlled_joints
-        self._set_property(self.robots, type, value, joint_indices, env_indices)
+        if element_idx is None and type.is_joint():
+            element_idx = self._controlled_joints
+        self._set_property(self.robots, type, value, element_idx, env_indices)
 
     def teleport_away(self, env_indices):
         """
@@ -385,7 +383,7 @@ class IsaacSimTask(BaseTask):
         pos[:, 2] = -10
         self.robots.set_world_poses(positions=pos, indices=env_indices)
 
-    def _set_property(self, view, obs_type, value, joint_indices=None, env_indices=None):
+    def _set_property(self, view, obs_type, value, element_idx=None, env_indices=None):
         """
         Sets the specified property values immediately.
 
@@ -393,7 +391,7 @@ class IsaacSimTask(BaseTask):
             view: The isaac sim view where the properties should be set.
             obs_type (ObservationType): The type of observation to update.
             value (torch.tensor, np.ndarray): The new values to be assigned.
-            joint_indices (torch.tensor, np.ndarray, list[int], optional): The joint indices to be updated.
+            element_idx (torch.tensor, np.ndarray, list[int], optional): The joint indices to be updated.
             env_indices (torch.tensor, np.ndarray, list[int], optional): The environment indices to apply 
                 the update.
         """
@@ -407,20 +405,45 @@ class IsaacSimTask(BaseTask):
         elif obs_type == ObservationType.BODY_ANG_VEL:
             view.set_angular_velocities(value, indices=env_indices)
         elif obs_type == ObservationType.JOINT_POS:
-            view.set_joint_positions(value, indices=env_indices, joint_indices=joint_indices)
+            view.set_joint_positions(value, indices=env_indices, joint_indices=element_idx)
         elif obs_type == ObservationType.JOINT_VEL:
-            view.set_joint_velocities(value, indices=env_indices, joint_indices=joint_indices)
+            view.set_joint_velocities(value, indices=env_indices, joint_indices=element_idx)
         elif obs_type == ObservationType.BODY_VEL:
             view.set_velocities(value, indices=env_indices)
+        elif obs_type == ObservationType.JOINT_GAIN:
+            #kps is stiffness, kds is damping
+            view.set_gains(kps=value[:, :, 0], kds=value[:, :, 1], indices=env_indices, joint_indices=element_idx)
+        elif obs_type == ObservationType.JOINT_GAIN_STIFFNESS:
+            view.set_gains(kps=value, indices=env_indices, joint_indices=element_idx)
+        elif obs_type == ObservationType.JOINT_GAIN_DAMPING:
+            view.set_gains(kds=value, indices=env_indices, joint_indices=element_idx)
+        elif obs_type == ObservationType.JOINT_DEFAULT_POS:
+            view.set_joints_default_state(positions=value, indices=env_indices, joint_indices=element_idx)
+        elif obs_type == ObservationType.JOINT_MAX_EFFORT:
+            view.set_max_efforts(value, indices=env_indices, joint_indices=element_idx)
+        elif obs_type == ObservationType.JOINT_ARMATURES:
+            view.set_armatures(value, indices=env_indices, joint_indices=element_idx)
+        elif obs_type == ObservationType.JOINT_FRICTION:
+            view.set_friction_coefficients(value, indices=env_indices, joint_indices=element_idx)
+        elif obs_type == ObservationType.SUB_BODY_INERTIA:
+            view.set_body_inertias(value, indices=env_indices, body_indices=element_idx)
+        elif obs_type == ObservationType.SUB_BODY_MASS:
+            view.set_body_masses(value, indices=env_indices, body_indices=element_idx)
+        elif obs_type == ObservationType.SUB_BODY_COM:
+            view.set_body_coms(positions=value[:, :3], orientations=value[:, 3:], indices=env_indices, body_indices=element_idx)
+        elif obs_type == ObservationType.SUB_BODY_COM_POS:
+            view.set_body_coms(positions=value, indices=env_indices, body_indices=element_idx)
+        elif obs_type == ObservationType.SUB_BODY_COM_ROT:
+            view.set_body_coms(orientations=value, indices=env_indices, body_indices=element_idx)
 
-    def _read_property(self, view, obs_type, joint_indices=None, env_indices=None, clone=True):
+    def _read_property(self, view, obs_type, element_idx=None, env_indices=None, clone=True):
         """
         Retrieves a specific property from the given view based on the observation type.
 
         Args:
             view: The view object that provides access to simulation data.
             obs_type (ObservationType): The type of observation to retrieve. 
-            joint_indices (torch.tensor, np.ndarray, list[int], optional): Indices of the joints 
+            element_idx (torch.tensor, np.ndarray, list[int], optional): Indices of the joints 
                 for which to retrieve data. Only used for joint-related observation types.
             env_indices (torch.tensor, np.ndarray, list[int], optional): Indices of the environments for 
                 which to retrieve data.
@@ -436,11 +459,38 @@ class IsaacSimTask(BaseTask):
         elif obs_type == ObservationType.BODY_ANG_VEL:
             return view.get_velocities(indices=env_indices, clone=clone)[:, 3:]
         elif obs_type == ObservationType.JOINT_POS:
-            return view.get_joint_positions(indices=env_indices, joint_indices=joint_indices, clone=clone)
+            return view.get_joint_positions(indices=env_indices, joint_indices=element_idx, clone=clone)
         elif obs_type == ObservationType.JOINT_VEL:
-            return view.get_joint_velocities(indices=env_indices, joint_indices=joint_indices, clone=clone)
+            return view.get_joint_velocities(indices=env_indices, joint_indices=element_idx, clone=clone)
         elif obs_type == ObservationType.BODY_VEL:
             return view.get_velocities(indices=env_indices, clone=clone)
+        elif obs_type == ObservationType.JOINT_GAIN:
+            #kps is stiffness, kds is damping
+            gains = view.get_gains(indices=env_indices, joint_indices=element_idx, clone=clone)
+            return self._arr_backend.concatenate(gains, dim=1)
+        elif obs_type == ObservationType.JOINT_GAIN_STIFFNESS:
+            return view.get_gains(indices=env_indices, joint_indices=element_idx, clone=clone)[0]
+        elif obs_type == ObservationType.JOINT_GAIN_DAMPING:
+            return view.get_gains(indices=env_indices, joint_indices=element_idx, clone=clone)[1]
+        elif obs_type == ObservationType.JOINT_DEFAULT_POS:
+            view.get_joints_default_state(indices=env_indices, joint_indices=element_idx, clone=clone)#TODO
+        elif obs_type == ObservationType.JOINT_MAX_EFFORT:
+            return view.get_max_efforts(indices=env_indices, joint_indices=element_idx, clone=clone)
+        elif obs_type == ObservationType.JOINT_ARMATURES:
+            return view.get_armatures(indices=env_indices, joint_indices=element_idx, clone=clone)
+        elif obs_type == ObservationType.JOINT_FRICTION:
+            return view.get_friction_coefficients(indices=env_indices, joint_indices=element_idx, clone=clone)
+        elif obs_type == ObservationType.SUB_BODY_INERTIA:
+            return view.get_body_inertias(indices=env_indices, body_indices=element_idx, clone=clone)
+        elif obs_type == ObservationType.SUB_BODY_MASS:
+            return view.get_body_masses(indices=env_indices, body_indices=element_idx, clone=clone)
+        elif obs_type == ObservationType.SUB_BODY_COM:
+            coms = view.get_body_coms(indices=env_indices, body_indices=element_idx, clone=clone)
+            return self._arr_backend.concatenate(coms, dim=1)
+        elif obs_type == ObservationType.SUB_BODY_COM_POS:
+            return view.get_body_coms(indices=env_indices, body_indices=element_idx, clone=clone)[0]
+        elif obs_type == ObservationType.SUB_BODY_COM_ROT:
+            return view.get_body_coms(indices=env_indices, body_indices=element_idx, clone=clone)[1]
 
     def _set_camera(self):
         """
@@ -487,3 +537,6 @@ class IsaacSimTask(BaseTask):
                 )
             view = GeometryPrimView(self.prim_paths[i] + "/Robot", reset_xform_properties=False)
             view.apply_physics_materials(materials[name])
+    @property
+    def _arr_backend(self):
+        return ArrayBackend.get_array_backend(self._backend)

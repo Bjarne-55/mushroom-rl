@@ -9,20 +9,38 @@ class ObservationType(Enum):
     Enumeration for different types of observations in a simulation.
 
     Each observation type is represented as a tuple containing:
-    - A unique identifier (`id`).
-    - A category (`category`), either 'body' or 'joint'.
+    - A unique identifier (`id`), automatically assigned.
+    - A category (`category`), either 'body', 'joint' or 'sub_body'.
     - The length of the observation (`length`).
     """
 
-    BODY_POS = (0, 'body', 3)
-    BODY_ROT = (1, 'body', 4)
-    BODY_LIN_VEL = (2, 'body', 3)
-    BODY_ANG_VEL = (3, 'body', 3)
-    BODY_VEL = (4, 'body', 6) #combination of lin_vel and ang_vel
-    JOINT_POS = (5, 'joint', 1)
-    JOINT_VEL = (7, 'joint', 1)
+    def __new__(cls, category, length):
+        value = len(cls.__members__)  # Automatically assign ID based on current number of members
+        obj = object.__new__(cls)
+        obj._value_ = (value, category, length)
+        return obj
 
-    def __init__(self, id, category, length):
+    BODY_POS = ('body', 3)
+    BODY_ROT = ('body', 4)
+    BODY_LIN_VEL = ('body', 3)
+    BODY_ANG_VEL = ('body', 3)
+    BODY_VEL = ('body', 6) #combination of lin_vel and ang_vel
+    JOINT_POS = ('joint', 1)
+    JOINT_VEL = ('joint', 1)
+    JOINT_GAIN = ('joint', 2)
+    JOINT_GAIN_STIFFNESS = ('joint', 1)
+    JOINT_GAIN_DAMPING = ('joint', 1)
+    JOINT_DEFAULT_POS = ('joint', 1)
+    JOINT_MAX_EFFORT = ('joint', 1)
+    JOINT_ARMATURES = ('joint', 1)
+    JOINT_FRICTION = ('joint', 1)
+    SUB_BODY_INERTIA = ('sub_body', 9)
+    SUB_BODY_MASS = ('sub_body', 1)
+    SUB_BODY_COM = ('sub_body', 7) # center of mass
+    SUB_BODY_COM_POS = ('sub_body', 3) # center of mass
+    SUB_BODY_COM_ROT = ('sub_body', 4) # center of mass
+
+    def __init__(self, category, length):
         """
         Constructor.
 
@@ -52,6 +70,16 @@ class ObservationType(Enum):
             bool: True if the observation type is is category 'joint', False otherwise.
         """
         return self.category == 'joint'
+    
+    def is_sub_body(self):
+        """
+        Checks whether the observation type belongs to the 'sub_body' category, meaning 
+        it is a property of a rigid body within an articulation.
+
+        Returns:
+            bool: True if the observation type is is category 'sub_body', False otherwise.
+        """
+        return self.category == 'sub_body'
 
 
 class ObservationHelper:
