@@ -11,38 +11,54 @@ from mushroom_rl.utils.viewer import ImageViewer
 from mushroom_rl.utils.isaac_sim import ObservationHelper, ObservationType, ActionType
 
 class IsaacSim(VectorizedEnvironment):
-    # TODO add all relevant varibales from mujoco Constructur
-    # TODO think about tasks
+    """
+    Class to create a Mushroom environment using the Isaac Sim simulator.
+    """
+
     def __init__(self, usd_path, actuation_spec, observation_spec, backend, device, collision_between_envs, 
-                 n_envs, env_spacing, gamma, horizon, timestep=None, n_substeps=1, n_intermediate_steps=1, 
+                 num_envs, env_spacing, gamma, horizon, timestep=None, n_substeps=1, n_intermediate_steps=1, 
                  additional_data_spec=None, collision_groups=None, action_type=ActionType.EFFORT, headless=True,
                  physics_material_spec=None, sim_params=None, camera_position=(5, 0, 4), camera_target=(0, 0, 0)):
         """
         Constructor.
 
         Args:
-            usd_path (str): Path to the USD file.
+            usd_path (str): Path to usd file of the robot.
             actuation_spec (list): A list specifying the names of the joints  which should be controllable by the
-               agent. Can be left empty when all actuators should be used;
+               agent.
             observation_spec (list): A list containing the names of data that should be made available to the agent as
-               an observation and their type (ObservationType). They are combined with a key, which is used to access
+               an observation and their type (ObservationType). They are combined with a path, which is used to access
                the data. An entry in the list is given by: (key, name, type). The name can later be used to retrieve
-               specific observations;
+               specific observations.
             backend (str): Backend for array operations.
             device (str): Compute device (e.g., 'cuda:0').
             collision_between_envs (bool): Whether inter-environment collisions are allowed.
-            n_envs (int): Number of parallel environments.
+            num_envs (int): Number of parallel environments.
             env_spacing (float): Distance between environments.
-            gamma (float): Discount factor for RL.
-            horizon (int): Episode horizon.
-            timestep (float, optional): Simulation timestep.
-            n_substeps (int): Number of substeps per simulation step.
-            n_intermediate_steps (int): Intermediate control steps.
-            additional_data_spec (list, optional): Additional data specifications.
-            collision_groups (dict, optional): Collision groups configuration.
-            action_type (ActionType): Type of action (effort, position, velocity).
+            gamma (float): The discounting factor of the environment.
+            horizon (int): The maximum horizon for the environment.
+            timestep (float, None): Simulation timestep.
+            n_substeps (int, None): Number of substeps per simulation step. If None default timestep 
+                of isaac sim is used
+            n_intermediate_steps (int): Number of intermediate control steps. Defaults to 1.
+            additional_data_spec (list, None): A list containing the data fields of interest, which should be read from
+               or written to during simulation. The entries are given as the following tuples: (key, path, type) key
+               is a string for later referencing in the "read_data" and "write_data" methods.
+            collision_groups (dict, None): A list containing groups of prims for which collisions should be checked during
+                simulation. The entries are given as ``(key, prim_paths)``, where key is a string for later reference and 
+                prim_paths is a list of paths to the prims.
+            action_type (ActionType): Control type of the joints (effort, position, velocity).
             headless (bool): Whether to run in headless mode.
-            sim_params (dict)
+            physics_material_spec (list, None): A list containing all data to create a custom physics material for each environment, which 
+                will be applied to all rigidbodies. 
+                The entries are given as the following tuples: (name, dynamic_friction, static_friction, restitution)
+            sim_params (dict): Dictionary of simulation parameters for the physics context. 
+                Intended to set gpu_collision_stack_size, gpu_found_lost_aggregate_pairs_capacity, 
+                gpu_found_lost_pairs_capacity, gpu_heap_capacity, gpu_max_num_partitions, gpu_max_particle_contacts, 
+                gpu_max_rigid_contact_count, gpu_max_rigid_patch_count, gpu_max_soft_body_contacts, 
+                gpu_temp_buffer_capacity, gpu_total_aggregate_pairs_capacity.
+            camera_position (tuple): The position where the camera is placed.
+            camera_target (tuple): The position the camera is aimed at.
         """
         self._headless = headless
         self._simulation_app = SimulationApp({"headless": headless, "hide_ui": False}) 
@@ -62,7 +78,7 @@ class IsaacSim(VectorizedEnvironment):
         self._create_world(timestep, sim_params)
         self._set_task(
             usd_path, 
-            n_envs, 
+            num_envs, 
             env_spacing, 
             collision_between_envs, 
             observation_spec, 
@@ -77,7 +93,7 @@ class IsaacSim(VectorizedEnvironment):
 
         observation_limits = self._task.get_observation_limits()
         observation_space = Box(*observation_limits)
-        self.observation_helper = ObservationHelper(observation_spec, observation_limits, backend, n_envs, device)
+        self.observation_helper = ObservationHelper(observation_spec, observation_limits, backend, num_envs, device)
 
         action_limits = self._task.get_action_limits()
         action_space = Box(action_limits[0].to(self._device), action_limits[1].to(self._device))
@@ -87,7 +103,7 @@ class IsaacSim(VectorizedEnvironment):
 
         self._recompute_action_per_step = type(self)._compute_action != IsaacSim._compute_action
         
-        super().__init__(mdp_info, n_envs)
+        super().__init__(mdp_info, num_envs)
 
     def _apply_carb_settings(self):
         """Apply Carb settings for optimization."""
@@ -99,7 +115,13 @@ class IsaacSim(VectorizedEnvironment):
         carb.settings.get_settings().set("/app/runLoops/main/rateLimitEnabled", False)
 
     def _create_world(self, timestep, custom_sim_params=None):
-        """Create and configure the simulation world."""
+        """
+        Create and configure the simulation world.
+
+        Args:
+            timestep (float, None): The physics timestep. the default physics timestep is used.
+            custom_sim_params (dict, None): A dictionary of simulation parameters to override the default ones.
+        """
         from omni.isaac.core.world import World
 
         sim_params = {
@@ -132,20 +154,26 @@ class IsaacSim(VectorizedEnvironment):
         self._world.set_simulation_dt(rendering_dt=self.dt)
         print(f"rendering dt: {self._world.get_rendering_dt()}, physix dt: {self._world.get_physics_dt()}")
 
-    def _set_task(self, usd_path, n_envs, env_spacing, collision_between_envs, observation_spec, actuation_spec, 
+    def _set_task(self, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, actuation_spec, 
                   additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target):
         """Set up the simulation task."""
         from mushroom_rl.environments.isaac_sim_task import IsaacSimTask
 
         self._task = IsaacSimTask(
-            self._physics_context, usd_path, n_envs, env_spacing, observation_spec, actuation_spec, 
-            self._backend, self._device, self._action_type, collision_between_envs, additional_data_spec, 
-            collision_groups, physics_material_spec, camera_position, camera_target
+            self._physics_context, usd_path, num_envs, env_spacing, observation_spec, actuation_spec, 
+            self._backend, self._device, self._action_type, self._n_intermediate_steps, collision_between_envs, 
+            additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target
         )
         self._world.add_task(self._task)
 
     def render_all(self, env_mask, record=False):
-        """Render all environments. Optionally record the frames."""
+        """
+        Render all environments. Optionally record the frames.
+
+        Args:
+            record (bool): If True, the function returns the rendered image data.
+                Defaults to False.
+        """
         self._world.render()
         data = self._task.rgb_annot.get_data()[..., :3]
 
@@ -157,6 +185,21 @@ class IsaacSim(VectorizedEnvironment):
             return data
 
     def step_all(self, env_mask, action):
+        """
+        Performs a simulation step for all active environments.
+
+        Args:
+            env_mask (torch.tensor, np.ndarray): A boolean mask indicating which environments 
+                are active for this step.
+            action (torch.tensor, np.ndarray): The actions to be applied to the active environments.
+
+        Returns:
+            cur_obs (torch.tensor, np.ndarray): The updated observations after the step.
+            reward (torch.tensor, np.ndarray): The computed rewards for each environment.
+            absorbing (torch.tensor, np.ndarray): A boolean tensor indicating if an environment is 
+                in an absorbing state.
+            extra_info (dict): Additional information about the simulation step.
+        """
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
 
         cur_obs = self._obs.clone().detach()
@@ -176,6 +219,8 @@ class IsaacSim(VectorizedEnvironment):
 
             self._task.apply_action(ctrl_action[env_indices], env_indices)
             self._world.step(render=not self._headless)
+
+            self._task.collision_helper.gather_collisions()
 
             self._simulation_post_step()
 
@@ -197,9 +242,22 @@ class IsaacSim(VectorizedEnvironment):
 
         cur_obs = self._modify_observation(cur_obs)
         
-        return cur_obs.clone().detach(), reward.clone().detach(), torch.logical_and(absorbing, env_mask).clone().detach(), extra_info
+        return cur_obs.clone().detach(), reward.clone().detach(), arr_backend.logical_and(absorbing, env_mask).clone().detach(), extra_info
     
     def reset_all(self, env_mask, state=None):
+        """
+        Resets the specified environments and initializes their states.
+
+        Args:
+            env_mask (torch.tensor, np.ndarray): A boolean mask indicating which environments 
+                should be reset.
+            state (torch.tensor, np.ndarray): The initial state to set for the reset environments. 
+                Defaults to None.
+        
+        Returns:
+            obs (torch.tensor, np.ndarray): The observations after resetting the environments.
+            info (dict): Additional information about the reset environments.
+        """
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
         env_indices = arr_backend.where(env_mask)[0]
 
@@ -217,55 +275,67 @@ class IsaacSim(VectorizedEnvironment):
     
     def reward(self, obs, action, next_obs, absorbing):
         """
-        Compute the reward based on the given transition.
+        Compute the rewards based on the given transitions.
 
         Args:
-            obs (np.array): the current state of the system;
-            action (np.array): the action that is applied in the current state;
-            next_obs (np.array): the state reached after applying the given
-                action.
-            absorbing (bool): whether next_state is an absorbing state or not.
+            obs (torch.tensor, np.array): the current states of the parallel environments.
+            action (torch.tensor, np.array): the actions that are applied in the current states.
+            next_obs (torch.tensor, np.array): the states reached after applying the given
+                actions.
+            absorbing (torch.tensor, np.array): whether next_state is an absorbing state or not.
 
         Returns:
-            The reward as a floating point scalar value.
+            The rewards as a array or tensor.
 
         """
         raise NotImplementedError
 
     def is_absorbing(self, obs):
         """
-        Check whether the given state is an absorbing state or not.
+        Check whether the given states are an absorbing states or not.
 
         Args:
-            obs (np.array): the state of the system.
+            obs (torch.tensor, np.array): the states of the parallel environments.
 
         Returns:
-            A boolean flag indicating whether this state is absorbing or not.
+            A tensor of booleans indicating whether the corresponding states are absorbing or not.
 
         """
         raise NotImplementedError
 
     def setup(self, env_indices, obs):
         """
-        A function that allows to execute setup code after an environment
-        reset.
-
+        A function that allows to execute setup code after an environment reset.
         """
         raise NotImplementedError
 
     def seed(self, seed=-1):
+        """
+        Sets the random seed for a deterministic behavior.
+
+        Args:
+            seed (int, optional): The seed value to set. If -1, a random seed is used. 
+                Defaults to -1.
+        
+        Returns:
+            int: The seed value that was set.
+        """
         from omni.isaac.core.utils.torch.maths import set_seed
         return set_seed(seed)
     
     def stop(self):
+        """
+        Resets simulation and closes viewer.
+        """
         if self._viewer is not None:
             self._viewer.close()
             self._viewer = None
-        #self._world.reset() #leads sometimes to an illegal cuda memory access
-        #self._task.reset_env(list(range(self.number)))
         self._world.reset(soft=True)
 
     def __del__(self):
+        """
+        Ends simulation.
+        """
         if self._viewer is not None:
             self._viewer.close()
             self._viewer = None
@@ -277,18 +347,21 @@ class IsaacSim(VectorizedEnvironment):
     
     def _check_collision(self, group1, group2, threshold=0., selector=None, dt=1.):
         """
-        Check for collision between the specified groups.
+        Checks whether the collision force between two collision groups exceeds a given threshold.
 
         Args:
-            group1 (string): A name referring to an entry contained in the
-                collision_groups list handed to the constructor;
-            group2 (string): A name referring to an entry contained in the
-                collision_groups list handed to the constructor.
+            group1 (str): The name of the first collision group.
+            group2 (str): The name of the second collision group.
+            threshold (float, torch.tensor, np.ndarray): The threshold value to compare against.
+                Can be a scalar or a tensor/array of the same shape as the computed forces.
+            selector (Callable[[torch.tensor | np.ndarray], torch.tensor | np.ndarray], optional): 
+                A function that processes the collision force tensor or array.
+                If None, a default selector is used. Defaults to None.
+            dt (float, optional): The time step duration used for computing forces. 
+                The function uses impulses if the default dt is used
 
         Returns:
-            A flag indicating whether a collision occurred between the given
-            groups or not.
-
+            A boolean tensor or array indicating where the computed forces exceed the given threshold.
         """
         if selector:
             return self._task.collision_helper.check_collision(group1, group2, threshold, selector=selector, dt=dt)
@@ -297,17 +370,20 @@ class IsaacSim(VectorizedEnvironment):
 
     def _get_collision_force(self, group1, group2, selector=None, dt=1.):
         """
-        Returns the collision force or impulse between the specified groups.
+        Computes the collision forces or impulses between two collision groups.
 
         Args:
-            group1 (string): A name referring to an entry contained in the
-                collision_groups list handed to the constructor;
-            group2 (string): A name referring to an entry contained in the
-                collision_groups list handed to the constructor.
-            selector (Callable[[torch.tensor | np.ndarray], torch.tensor | np.ndarray]): 
+            group1 (str): The name of the first collision group.
+            group2 (str): The name of the second collision group.
+            selector (Callable[[torch.tensor | np.ndarray], torch.Tensor | np.ndarray], optional): 
+                A function that processes the collision force tensor. 
+                Defaults to selecting the maximum force of each environment
+            dt (float, optional): The time step duration used for computing forces. 
+                The function returns contact impulses if the default dt is used
 
         Returns:
-            A 3D vector specifying the collision forces
+            A tensor or array containing the computed collision forces between the groups, 
+            processed by the `selector` function.
         """
         if selector:
             return self._task.collision_helper.get_collision_force(group1, group2, selector, dt)
@@ -315,18 +391,64 @@ class IsaacSim(VectorizedEnvironment):
             return self._task.collision_helper.get_collision_force(group1, group2, dt=dt)
     
     def _get_collision_count(self, group1, group2, threshold=0., selector=None, dt=1.):
+        """
+        Counts the number of collisions between two groups, considering at most one collision between each 
+        possible pair of objects from the two groups. 
+        For example, the maximum collision count between a group with 3 objects and a group with 4 objects 
+        would be 12.
+
+        Args:
+            group1 (str): The name of the first collision group.
+            group2 (str): The name of the second collision group.
+            threshold (float, torch.tensor, np.ndarray): The threshold value for detecting collisions.
+                Can be a scalar or a tensor/array of the same shape as the computed forces.
+            selector (Callable[[torch.tensor | np.ndarray], torch.tensor | np.ndarray], optional): 
+                A function that processes the collision force tensor or array.
+                If None, the default selector computes the norm along the collision dimension. Defaults to None.
+            dt (float, optional): The time step duration used for computing forces. Defaults to 1.0.
+
+        Returns:
+            A tensor or array containing the count of collisions
+        """
         if selector:
             return self._task.collision_helper.count_collisions(group1, group2, threshold, selector=selector, dt=dt)
         else:
             return self._task.collision_helper.count_collisions(group1, group2, threshold, dt=dt)
     
     def _read_data(self, name, env_indices=None):
+        """
+        Read data from isaac sim.
+
+        Args: 
+            name (str): A name referring to an entry contained in additional_data_spec or observation_spec.
+
+        Returns:
+            The desired data as a tensor or array.
+        """
         return self._task.read_data(name, env_indices)
 
     def _write_data(self, name, value, env_indices=None):
+        """
+        Writes data to isaac sim.
+
+        Args: 
+            name (str): A name referring to an entry contained in additional_data_spec or observation_spec.
+            value (torch.tensor, np.ndarra): The data that should be written.
+        """
         self._task.write_data(name, value, env_indices)
 
     def _set_joint_data(self, value, type, joint_indices=None, env_indices=None):
+        """
+        Sets the joint properties for the specified joints and environments.
+
+        Args:
+            value (torch.tensor, np.ndarray): The value to set for the specified joint property.
+            type (ObservationType): The type of joint property to be set (e.g., "position", "velocity").
+            joint_indices (torch.tensor, np.ndarray, list[int], optional): The indices of the joints to update.
+                If None, defaults to the controlled joints.
+            env_indices (torch.tensor, np.ndarray, list[int], optional): The indices of the environments where
+                the joint data should be updated. If None, applies to all environments.
+        """
         assert type == ObservationType.JOINT_POS or type == ObservationType.JOINT_VEL
         self._task.set_joint_data(value, type, joint_indices, env_indices)
 
@@ -371,7 +493,7 @@ class IsaacSim(VectorizedEnvironment):
             action (np.ndarray, torch.tensor): the actions, provided at every step.
 
         Returns:
-            The action to be set in the actual pybullet simulation.
+            The action to be applied in the isaac sim simulation
 
         """
         return action
