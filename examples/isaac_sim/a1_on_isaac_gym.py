@@ -1,3 +1,15 @@
+from isaacgym import gymtorch, gymapi, gymutil
+from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
+from mushroom_rl.core import VectorCore, Logger
+from mushroom_rl.algorithms.actor_critic import TRPO, PPO
+
+from mushroom_rl.policy import GaussianTorchPolicy
+from mushroom_rl.utils import TorchUtils
+
+from mushroom_rl.utils.plot import plot_mean_conf
+import matplotlib.pyplot as plt
+import os
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,18 +21,6 @@ from tqdm import trange
 import random
 import time
 
-from mushroom_rl.core import VectorCore, Logger
-from mushroom_rl.algorithms.actor_critic import TRPO, PPO
-
-from mushroom_rl.policy import GaussianTorchPolicy
-from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
-from mushroom_rl.utils import TorchUtils
-
-from mushroom_rl.utils.plot import plot_mean_conf
-import matplotlib.pyplot as plt
-import os
-
-"""
 class Network(nn.Module):
     def __init__(self, input_shape, output_shape, n_features, **kwargs):
         super(Network, self).__init__()
@@ -49,42 +49,7 @@ class Network(nn.Module):
         a = self._h4(features3)
 
         return a
-"""
-
-class Network(nn.Module):
-    def __init__(self, input_shape, output_shape, n_features, **kwargs):
-        super(Network, self).__init__()
-
-        n_input = input_shape[-1]
-        n_output = output_shape[0]
-
-        self.actor = nn.Sequential(
-            nn.Linear(n_input, n_features[0]),
-            nn.ELU(alpha=1.),
-            nn.Linear(n_features[0], n_features[1]),
-            nn.ELU(alpha=1.),
-            nn.Linear(n_features[1], n_features[2]),
-            nn.ELU(alpha=1.),
-            nn.Linear(n_features[2], n_output)
-        )
-
-    def forward(self, state, **kwargs):
-        state = torch.squeeze(state, 1).float()
-        return self.actor(state)
-
-class A1LeggedGymActor(IsaacA1Description):
-    def _modify_observation(self, obs):
-        obs = super()._modify_observation(obs)
-        new_obs = obs.clone().detach()
-        new_obs[:, 6:9] = self.observation_helper.get_from_obs(obs, "projected_gravity")
-        new_obs[:, 9:12] = self.observation_helper.get_from_obs(obs, "commands")
-        new_obs[:, 12:24] = self.observation_helper.get_from_obs(obs, "joint_pos")
-        new_obs[:, 24:36] = self.observation_helper.get_from_obs(obs, "joint_vel")
-        new_obs[:, 36:48] = self.observation_helper.get_from_obs(obs, "actions")
-
-        return new_obs
-
-
+    
 def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
                alg_params, policy_params, seed):
 
@@ -92,8 +57,16 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = A1LeggedGymActor(num_envs, 1000, True, True)
-    mdp.seed(seed)
+    class CustomA1(IsaacA1Description):
+        def _import_helper_functions(self):
+            from isaacgym.torch_utils import quat_apply, quat_rotate_inverse, torch_rand_float
+            self.quat_apply = quat_apply
+            self.quat_rotate_inverse = quat_rotate_inverse
+            self.torch_rand_float = torch_rand_float
+
+        def render_all(self, env_mask, record=False):
+            self._world.render()
+    mdp = CustomA1(num_envs, 1000, True, True)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
@@ -113,7 +86,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     alg_params['critic_params'] = critic_params
 
     agent = alg(mdp.info, policy, **alg_params)
-    #agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1737486890.9567304.zip")
+    #agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1738280083.985857.zip")
     #agent.set_logger(logger)
 
     core = VectorCore(agent, mdp)
@@ -124,7 +97,8 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     Vs = []
     INFOs = []
 
-    dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
+    """
+    dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
 
     J = torch.mean(dataset.discounted_return).to("cpu").item()
     R = torch.mean(dataset.undiscounted_return.to("cpu")).item()
@@ -138,13 +112,11 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     INFOs.append(INFO)
 
     logger.epoch_info(0, J=J, R=R, entropy=E, V=V)
+    """
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
-        if it % 10 == 0:
-            dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
-        else:
-            dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
+        dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
 
         J = torch.mean(dataset.discounted_return).to("cpu").item()
         R = torch.mean(dataset.undiscounted_return).to("cpu").item()

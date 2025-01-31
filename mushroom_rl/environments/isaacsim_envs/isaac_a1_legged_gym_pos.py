@@ -16,6 +16,7 @@ class IsaacA1Description(IsaacSim):
         backend="torch"
         device="cuda:0"
 
+        #TODO rework
         usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/a1_leggedgym_instance_pos/a1/a1.usd"
 
         self._action_spec = [
@@ -30,42 +31,45 @@ class IsaacA1Description(IsaacSim):
             0.1, 1., -1.5,
             -0.1, 1., -1.5
         ], device=device)
-        #self._action_spec = ["FL_thigh_joint", "FR_thigh_joint"]
         observation_spec = [
             ("base_lin_vel", "", ObservationType.BODY_LIN_VEL),
             ("base_ang_vel", "", ObservationType.BODY_ANG_VEL),
 
             ("FL_hip_joint_pos", "/trunk/FL_hip_joint", ObservationType.JOINT_POS),#FL
-            ("FL_hip_joint_vel", "/trunk/FL_hip_joint", ObservationType.JOINT_VEL),
             ("FL_thigh_joint_pos", "/FL_hip/FL_thigh_joint", ObservationType.JOINT_POS),
-            ("FL_thigh_joint_vel", "/FL_hip/FL_thigh_joint", ObservationType.JOINT_VEL),
             ("FL_calf_joint_pos", "/FL_thigh/FL_calf_joint", ObservationType.JOINT_POS),
-            ("FL_calf_joint_vel", "/FL_thigh/FL_calf_joint", ObservationType.JOINT_VEL),
 
             ("FR_hip_joint_pos", "/trunk/FR_hip_joint", ObservationType.JOINT_POS),#FR
-            ("FR_hip_joint_vel", "/trunk/FR_hip_joint", ObservationType.JOINT_VEL),
             ("FR_thigh_joint_pos", "/FR_hip/FR_thigh_joint", ObservationType.JOINT_POS),
-            ("FR_thigh_joint_vel", "/FR_hip/FR_thigh_joint", ObservationType.JOINT_VEL),
             ("FR_calf_joint_pos", "/FR_thigh/FR_calf_joint", ObservationType.JOINT_POS),
-            ("FR_calf_joint_vel", "/FR_thigh/FR_calf_joint", ObservationType.JOINT_VEL),
 
             ("RL_hip_joint_pos", "/trunk/RL_hip_joint", ObservationType.JOINT_POS),#RL
-            ("RL_hip_joint_vel", "/trunk/RL_hip_joint", ObservationType.JOINT_VEL),
             ("RL_thigh_joint_pos", "/RL_hip/RL_thigh_joint", ObservationType.JOINT_POS),
-            ("RL_thigh_joint_vel", "/RL_hip/RL_thigh_joint", ObservationType.JOINT_VEL),
             ("RL_calf_joint_pos", "/RL_thigh/RL_calf_joint", ObservationType.JOINT_POS),
-            ("RL_calf_joint_vel", "/RL_thigh/RL_calf_joint", ObservationType.JOINT_VEL),
 
             ("RR_hip_joint_pos", "/trunk/RR_hip_joint", ObservationType.JOINT_POS),#RR
-            ("RR_hip_joint_vel", "/trunk/RR_hip_joint", ObservationType.JOINT_VEL),
             ("RR_thigh_joint_pos", "/RR_hip/RR_thigh_joint", ObservationType.JOINT_POS),
-            ("RR_thigh_joint_vel", "/RR_hip/RR_thigh_joint", ObservationType.JOINT_VEL),
             ("RR_calf_joint_pos", "/RR_thigh/RR_calf_joint", ObservationType.JOINT_POS),
+
+            ("FL_hip_joint_vel", "/trunk/FL_hip_joint", ObservationType.JOINT_VEL),#FL
+            ("FL_thigh_joint_vel", "/FL_hip/FL_thigh_joint", ObservationType.JOINT_VEL),
+            ("FL_calf_joint_vel", "/FL_thigh/FL_calf_joint", ObservationType.JOINT_VEL),
+
+            ("FR_hip_joint_vel", "/trunk/FR_hip_joint", ObservationType.JOINT_VEL),#FR
+            ("FR_thigh_joint_vel", "/FR_hip/FR_thigh_joint", ObservationType.JOINT_VEL),
+            ("FR_calf_joint_vel", "/FR_thigh/FR_calf_joint", ObservationType.JOINT_VEL),
+
+            ("RL_hip_joint_vel", "/trunk/RL_hip_joint", ObservationType.JOINT_VEL),#RL
+            ("RL_thigh_joint_vel", "/RL_hip/RL_thigh_joint", ObservationType.JOINT_VEL),
+            ("RL_calf_joint_vel", "/RL_thigh/RL_calf_joint", ObservationType.JOINT_VEL),
+
+            ("RR_hip_joint_vel", "/trunk/RR_hip_joint", ObservationType.JOINT_VEL),#RR
+            ("RR_thigh_joint_vel", "/RR_hip/RR_thigh_joint", ObservationType.JOINT_VEL),
             ("RR_calf_joint_vel", "/RR_thigh/RR_calf_joint", ObservationType.JOINT_VEL),
         ]
         additional_data_spec = [("body_rot", "", ObservationType.BODY_ROT), ("body_vel", "", ObservationType.BODY_VEL)]
         collision_groups = [
-            ("groundplane", ["/World/defaultGroundPlane/GroundPlane/CollisionPlane"]), 
+            ("groundplane", ["/World/groundPlane/collisionPlane"]), 
             ("FL_foot", ["/FL_foot"]), 
             ("FR_foot", ["/FR_foot"]), 
             ("RL_foot", ["/RL_foot"]), 
