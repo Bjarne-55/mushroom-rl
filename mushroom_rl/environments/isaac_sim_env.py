@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import random
 
-from isaacsim import SimulationApp
+#from isaacsim import SimulationApp
 
 from mushroom_rl.core import VectorizedEnvironment, MDPInfo, ArrayBackend
 from mushroom_rl.rl_utils.spaces import Box
@@ -220,7 +220,7 @@ class IsaacSim(VectorizedEnvironment):
             self._task.apply_action(ctrl_action[env_indices], env_indices)
             self._world.step(render=not self._headless)
 
-            self._task.collision_helper.gather_collisions()
+            #self._task.collision_helper.gather_collisions()#TODO completly remove
 
             self._simulation_post_step()
 
@@ -414,6 +414,9 @@ class IsaacSim(VectorizedEnvironment):
             return self._task.collision_helper.count_collisions(group1, group2, threshold, selector=selector, dt=dt)
         else:
             return self._task.collision_helper.count_collisions(group1, group2, threshold, dt=dt)
+        
+    def _get_net_collision_forces(self, group, dt=1.):
+        return self._task.collision_helper.get_net_contact_forces(group, dt)
     
     def _read_data(self, name, env_indices=None):
         """

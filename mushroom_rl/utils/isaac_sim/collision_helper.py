@@ -62,7 +62,8 @@ class CollisionHelper:
                 lambda acc, val: acc + val if val not in acc else acc, [value for key, value in self.collision_groups.items() if key != group_name], []
             )
             self._collision_groups_indices[group_name] = {key: self._arr_backend.from_list([possible_partners.index(value) for value in self.collision_groups[key]]) for key in self.collision_groups if key != group_name}
-            possible_partners = [self.BASE_ENV_PATH + "/.*/Robot" + partner if not partner.startswith("/World/") else partner for partner in possible_partners]
+            #possible_partners = [self.BASE_ENV_PATH + "/.*/Robot" + partner if not partner.startswith("/World/") else partner for partner in possible_partners]
+            possible_partners = ["/World/groundPlane/collisionPlane"]
             for path in group:
                 if path in self._views:
                     continue
@@ -176,6 +177,12 @@ class CollisionHelper:
         forces = self.get_collision_force(group1, group2, selector, dt)
         return self._arr_backend.sum(forces > threshold, dim=1)
     
+    def get_net_contact_forces(self, group, dt=1.0):
+        prims = self.collision_groups[group]
+
+        forces = self._arr_backend.concatenate([self._views[p].get_net_contact_forces(dt=dt).unsqueeze(1) for p in prims], dim=1)
+        return forces
+
     @property
     def _arr_backend(self):
         return ArrayBackend.get_array_backend(self._backend)

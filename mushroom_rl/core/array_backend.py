@@ -187,7 +187,18 @@ class ArrayBackend(object):
     @staticmethod
     def norm(array, dim=None):
         raise NotImplementedError
-
+    
+    @staticmethod
+    def logical_and(x, y):
+        raise NotImplementedError
+    
+    @staticmethod
+    def sum(array, dim=None):
+        raise NotImplementedError
+    
+    @staticmethod
+    def stack(lst, dim):
+        raise NotImplementedError
 
 class NumpyBackend(ArrayBackend):
     @staticmethod
@@ -336,7 +347,18 @@ class NumpyBackend(ArrayBackend):
     @staticmethod
     def norm(array, ord=None, dim=None):
         return np.linalg.norm(array, ord=ord, axis=dim)
-
+    
+    @staticmethod
+    def logical_and(x, y):
+        return np.logical_and(x, y)
+    
+    @staticmethod
+    def sum(array, dim=None):
+        return np.sum(array, axis=dim)
+    
+    @staticmethod
+    def stack(lst, dim):
+        return np.stack(lst, axis=dim)
 
 class TorchBackend(ArrayBackend):
 
@@ -493,6 +515,18 @@ class TorchBackend(ArrayBackend):
     @staticmethod
     def norm(array, ord=None, dim=None):
         return torch.linalg.norm(array, ord=ord, dim=dim)
+    
+    @staticmethod
+    def logical_and(x, y):
+        return torch.logical_and(x, y)
+    
+    @staticmethod
+    def sum(array, dim=None):
+        return torch.sum(array, dim=dim)
+    
+    @staticmethod
+    def stack(lst, dim):
+        return torch.stack(lst, dim=dim)
 
 class ListBackend(ArrayBackend):
 
@@ -590,3 +624,15 @@ class ListBackend(ArrayBackend):
     @staticmethod
     def norm(array, ord=None, dim=None):
         return np.linalg.norm(array, ord=ord, axis=dim)
+    
+    @staticmethod
+    def logical_and(x, y):
+        return np.logical_and(x, y)
+    
+    @staticmethod
+    def sum(array, dim=None):
+        return np.sum(array, axis=dim)
+
+    @staticmethod
+    def stack(lst, dim):
+        return np.stack(lst, axis=dim)

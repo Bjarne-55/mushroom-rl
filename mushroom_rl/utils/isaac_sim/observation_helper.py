@@ -25,6 +25,7 @@ class ObservationType(Enum):
     BODY_LIN_VEL = ('body', 3)
     BODY_ANG_VEL = ('body', 3)
     BODY_VEL = ('body', 6) #combination of lin_vel and ang_vel
+    BODY_SCALE = ('body', 3)
     JOINT_POS = ('joint', 1)
     JOINT_VEL = ('joint', 1)
     JOINT_GAIN = ('joint', 2)
@@ -32,13 +33,15 @@ class ObservationType(Enum):
     JOINT_GAIN_DAMPING = ('joint', 1)
     JOINT_DEFAULT_POS = ('joint', 1)
     JOINT_MAX_EFFORT = ('joint', 1)
+    JOINT_MAX_VELOCITY = ('joint', 1)
+    JOINT_MAX_POS = ('joint', 2)
     JOINT_ARMATURES = ('joint', 1)
     JOINT_FRICTION = ('joint', 1)
     SUB_BODY_INERTIA = ('sub_body', 9)
     SUB_BODY_MASS = ('sub_body', 1)
     SUB_BODY_COM = ('sub_body', 7) # center of mass
-    SUB_BODY_COM_POS = ('sub_body', 3) # center of mass
-    SUB_BODY_COM_ROT = ('sub_body', 4) # center of mass
+    SUB_BODY_COM_POS = ('sub_body', 3) # center of mass position
+    SUB_BODY_COM_ROT = ('sub_body', 4) # center of mass orientation
 
     def __init__(self, category, length):
         """
@@ -202,9 +205,11 @@ class ObservationHelper:
         """
         index = 0
         mapping = {}
-        for name, _, obs_type in self._observation_spec:
-            mapping[name] = list(range(index, index + obs_type.length))
-            index += obs_type.length
+        for name, _, obs_type, element_names in self._observation_spec:
+            n_elements = len(element_names) if isinstance(element_names, list) else 1
+            end_index = index + obs_type.length * n_elements
+            mapping[name] = list(range(index, end_index))
+            index = end_index
         mapping = {key: torch.tensor(value, device=self._device) for key, value in mapping.items()}
         return mapping
     

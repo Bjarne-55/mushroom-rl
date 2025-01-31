@@ -146,8 +146,8 @@ class IsaacSimTask(BaseTask):
         else:
             specifications = self._observation_spec + self._additional_data_spec
         
-        for name, path, obs_type in specifications:
-            if obs_type.is_body() and path not in self._views:
+        for name, path, obs_type, element_names in specifications:
+            if path not in self._views:
                 view = RigidPrimView(
                     prim_paths_expr=self.BASE_ENV_PATH + "/.*/Robot" + path,
                     name=path.replace("/", "_") + "_view",
@@ -177,20 +177,19 @@ class IsaacSimTask(BaseTask):
 
     def _create_observer_tuple(self, spec):
         mapping = {}
-        for name, path, obs_type in spec:
-            if obs_type.is_joint():
-                view = self.robots
-                joint_name = path.split('/')[-1]
-                element_idx = self.robots.get_dof_index(joint_name)
-                element_idx = self._arr_backend.from_list([element_idx])
-            elif obs_type.is_sub_body():
-                view = self.robots
-                body_name = path.split('/')[-1]
-                element_idx = self.robots.get_body_index(body_name)
-                element_idx = self._arr_backend.from_list([element_idx])
-            else:
-                view = self._views[path]
-                element_idx = None
+        for name, path, obs_type, element_names in spec:
+            if isinstance(element_names, str):
+                element_names = [element_names]
+
+            view = self._views[path]
+            element_idx = None
+
+            # Find indices of joints or bodies
+            if obs_type.is_joint() or obs_type.is_sub_body():
+                index_fn = view.get_dof_index if obs_type.is_joint() else view.get_body_index
+                element_idx = [index_fn(n) for n in element_names]
+                element_idx = self._arr_backend.from_list(element_idx)
+
             mapping[name] = (view, obs_type, element_idx)
         return mapping
     
@@ -383,7 +382,7 @@ class IsaacSimTask(BaseTask):
         pos[:, 2] = -10
         self.robots.set_world_poses(positions=pos, indices=env_indices)
 
-    def _set_property(self, view, obs_type, value, element_idx=None, env_indices=None):
+    def _set_property(self, view, obs_type, value, element_idx=None, env_indices=None):#TODO missing max_pos_joint
         """
         Sets the specified property values immediately.
 
@@ -410,6 +409,8 @@ class IsaacSimTask(BaseTask):
             view.set_joint_velocities(value, indices=env_indices, joint_indices=element_idx)
         elif obs_type == ObservationType.BODY_VEL:
             view.set_velocities(value, indices=env_indices)
+        elif obs_type == ObservationType.BODY_SCALE:
+            view.set_local_scales(value, indices=env_indices)
         elif obs_type == ObservationType.JOINT_GAIN:
             #kps is stiffness, kds is damping
             view.set_gains(kps=value[:, :, 0], kds=value[:, :, 1], indices=env_indices, joint_indices=element_idx)
@@ -421,6 +422,8 @@ class IsaacSimTask(BaseTask):
             view.set_joints_default_state(positions=value, indices=env_indices, joint_indices=element_idx)
         elif obs_type == ObservationType.JOINT_MAX_EFFORT:
             view.set_max_efforts(value, indices=env_indices, joint_indices=element_idx)
+        elif obs_type == ObservationType.JOINT_MAX_VELOCITY:
+            view.set_max_joint_velocities(value, indices=env_indices, joint_indices=element_idx)
         elif obs_type == ObservationType.JOINT_ARMATURES:
             view.set_armatures(value, indices=env_indices, joint_indices=element_idx)
         elif obs_type == ObservationType.JOINT_FRICTION:
@@ -458,16 +461,18 @@ class IsaacSimTask(BaseTask):
             return view.get_velocities(indices=env_indices, clone=clone)[:, :3]
         elif obs_type == ObservationType.BODY_ANG_VEL:
             return view.get_velocities(indices=env_indices, clone=clone)[:, 3:]
+        elif obs_type == ObservationType.BODY_VEL:
+            return view.get_velocities(indices=env_indices, clone=clone)
+        elif obs_type == ObservationType.BODY_SCALE:
+            return view.get_local_scales(indices=env_indices)
         elif obs_type == ObservationType.JOINT_POS:
             return view.get_joint_positions(indices=env_indices, joint_indices=element_idx, clone=clone)
         elif obs_type == ObservationType.JOINT_VEL:
             return view.get_joint_velocities(indices=env_indices, joint_indices=element_idx, clone=clone)
-        elif obs_type == ObservationType.BODY_VEL:
-            return view.get_velocities(indices=env_indices, clone=clone)
         elif obs_type == ObservationType.JOINT_GAIN:
             #kps is stiffness, kds is damping
             gains = view.get_gains(indices=env_indices, joint_indices=element_idx, clone=clone)
-            return self._arr_backend.concatenate(gains, dim=1)
+            return self._arr_backend.stack(gains, dim=1)
         elif obs_type == ObservationType.JOINT_GAIN_STIFFNESS:
             return view.get_gains(indices=env_indices, joint_indices=element_idx, clone=clone)[0]
         elif obs_type == ObservationType.JOINT_GAIN_DAMPING:
@@ -476,6 +481,10 @@ class IsaacSimTask(BaseTask):
             view.get_joints_default_state(indices=env_indices, joint_indices=element_idx, clone=clone)#TODO
         elif obs_type == ObservationType.JOINT_MAX_EFFORT:
             return view.get_max_efforts(indices=env_indices, joint_indices=element_idx, clone=clone)
+        elif obs_type == ObservationType.JOINT_MAX_VELOCITY:
+            return view.get_joint_max_velocities(indices=env_indices, joint_indices=element_idx, clone=clone)
+        elif obs_type == ObservationType.JOINT_MAX_POS:
+            return view.get_dof_limits().to(self._device)[:, self._controlled_joints]
         elif obs_type == ObservationType.JOINT_ARMATURES:
             return view.get_armatures(indices=env_indices, joint_indices=element_idx, clone=clone)
         elif obs_type == ObservationType.JOINT_FRICTION:
