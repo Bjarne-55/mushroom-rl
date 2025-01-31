@@ -46,8 +46,8 @@ class Box(Serializable):
         self._data_type = data_type
 
         self._add_save_attr(
-            _low='numpy',
-            _high='numpy',
+            _low='torch',
+            _high='torch',
             _data_type='primitive'
         )
 
