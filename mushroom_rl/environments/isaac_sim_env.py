@@ -2,8 +2,6 @@ import numpy as np
 import torch
 import random
 
-from isaacsim import SimulationApp
-
 from mushroom_rl.core import VectorizedEnvironment, MDPInfo, ArrayBackend
 from mushroom_rl.rl_utils.spaces import Box
 from mushroom_rl.utils import TorchUtils
@@ -60,8 +58,9 @@ class IsaacSim(VectorizedEnvironment):
             camera_position (tuple): The position where the camera is placed.
             camera_target (tuple): The position the camera is aimed at.
         """
+        
         self._headless = headless
-        self._simulation_app = SimulationApp({"headless": headless, "hide_ui": False}) 
+        self._simulation_app = self._create_simulation_app(headless)
         self._viewer = None
 
         self._apply_carb_settings()
@@ -104,6 +103,10 @@ class IsaacSim(VectorizedEnvironment):
         self._recompute_action_per_step = type(self)._compute_action != IsaacSim._compute_action
         
         super().__init__(mdp_info, num_envs)
+    
+    def _create_simulation_app(self, headless):
+        from isaacsim import SimulationApp
+        return SimulationApp({"headless": headless, "hide_ui": False}) 
 
     def _apply_carb_settings(self):
         """Apply Carb settings for optimization."""

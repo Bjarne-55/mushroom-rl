@@ -50,8 +50,38 @@ class Network(nn.Module):
 
         return a
     
+class ActorNetwork(nn.Module):
+    def __init__(self, input_shape, output_shape, n_features, **kwargs):
+        super(ActorNetwork, self).__init__()
+
+        n_input = input_shape[-1]
+        n_output = output_shape[0]
+
+        self.actor = nn.Sequential(
+            nn.Linear(n_input, n_features[0]),
+            nn.ELU(alpha=1.),
+            nn.Linear(n_features[0], n_features[1]),
+            nn.ELU(alpha=1.),
+            nn.Linear(n_features[1], n_features[2]),
+            nn.ELU(alpha=1.),
+            nn.Linear(n_features[2], n_output)
+        )
+
+        #nn.init.xavier_uniform_(self.actor[0].weight, gain=nn.init.calculate_gain('relu'))
+        #nn.init.xavier_uniform_(self.actor[2].weight, gain=nn.init.calculate_gain('relu'))
+        #nn.init.xavier_uniform_(self.actor[4].weight, gain=nn.init.calculate_gain('relu'))
+        #nn.init.xavier_uniform_(self.actor[6].weight, gain=nn.init.calculate_gain('linear'))
+
+    def forward(self, state, **kwargs):
+        state = torch.squeeze(state, 1).float()
+        return self.actor(state)
+    
+class MyPPO(PPO):
+    def draw_action(self, state, policy_state=None):
+        return self.policy._mu.model.network(state).detach(), None
+    
 def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
-               alg_params, policy_params, seed):
+               alg_params, policy_params):
 
     logger = Logger(alg.__name__ + "_1_legged_gym", results_dir="./logs/", log_console=True, use_timestamp=True)
     logger.strong_line()
@@ -66,6 +96,24 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
 
         def render_all(self, env_mask, record=False):
             self._world.render()
+        
+        def _modify_observation(self, obs):
+            obs = super()._modify_observation(obs)
+            new_obs = obs.clone().detach()
+            new_obs[:, 6:9] = self.observation_helper.get_from_obs(obs, "projected_gravity")
+            new_obs[:, 9:12] = self.observation_helper.get_from_obs(obs, "commands")
+            new_obs[:, 12:24] = self.observation_helper.get_from_obs(obs, "joint_pos")
+            new_obs[:, 24:36] = self.observation_helper.get_from_obs(obs, "joint_vel")
+            new_obs[:, 36:48] = self.observation_helper.get_from_obs(obs, "actions")
+
+            return new_obs
+
+        """
+        def _preprocess_action(self, action):
+            action = torch.tensor([ 2.2371,  2.6853, -2.1297,  0.2724,  2.8875, -3.4774, -1.2897,  2.4514,
+        -3.2056,  3.1754,  1.2843, -4.3905], device='cuda:0').repeat(self.number, 1)
+            return super()._preprocess_action(action)
+        """
     mdp = CustomA1(num_envs, 1000, True, True)
     
     critic_params = dict(network=Network,
@@ -78,26 +126,26 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
                          input_shape=mdp.info.observation_space.shape,
                          output_shape=(1,))
 
-    policy = GaussianTorchPolicy(Network,
+    policy = GaussianTorchPolicy(ActorNetwork,
                                  mdp.info.observation_space.shape,
                                  mdp.info.action_space.shape,
                                  **policy_params)
 
     alg_params['critic_params'] = critic_params
 
+    loaded_dict = torch.load("/home/bjarne/GitWorkspace/BachelorThesis/legged_gym/logs/rough_a1/Dec11_10-37-14_/model_1500.pt")
+    policy._mu.model.network.load_state_dict(loaded_dict["model_state_dict"], strict=False)
+    s = loaded_dict["model_state_dict"]["std"]
+    policy._log_sigma = nn.Parameter(s)
+    policy._mu.model.network.to("cuda:0")
+
     agent = alg(mdp.info, policy, **alg_params)
-    #agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1738280083.985857.zip")
+    file_name = "1738322414.157496.zip"
+    #agent = agent.load(f"/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/{file_name}")
     #agent.set_logger(logger)
 
     core = VectorCore(agent, mdp)
 
-    Js = []
-    Rs = []
-    Es = []
-    Vs = []
-    INFOs = []
-
-    """
     dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
 
     J = torch.mean(dataset.discounted_return).to("cpu").item()
@@ -105,39 +153,8 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     E = agent.policy.entropy().to("cpu").item()
     V = torch.mean(agent._V(dataset.get_init_states())).detach().to("cpu").item()
     INFO = {key: torch.mean(value).to("cpu").item() for key, value in dataset.info.items()}
-    Js.append(J)
-    Rs.append(R)
-    Es.append(E)
-    Vs.append(V)
-    INFOs.append(INFO)
 
     logger.epoch_info(0, J=J, R=R, entropy=E, V=V)
-    """
-
-    for it in trange(n_epochs, leave=False):
-        core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
-        dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
-
-        J = torch.mean(dataset.discounted_return).to("cpu").item()
-        R = torch.mean(dataset.undiscounted_return).to("cpu").item()
-        E = agent.policy.entropy().to("cpu").item()
-        V = torch.mean(agent._V(dataset.get_init_states())).detach().to("cpu").item()
-        INFO = {key: torch.mean(value).to("cpu").item() for key, value in dataset.info.items()}
-        Js.append(J)
-        Rs.append(R)
-        Es.append(E)
-        Vs.append(V)
-        INFOs.append(INFO)
-
-        logger.epoch_info(it+1, J=J, R=R, entropy=E, V=V)
-        agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
-
-    #logger.info('Press a button to visualize')
-    #input()
-    core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
-    #agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
-
-    return Js, Rs, Es, Vs, INFOs
 
 def create_plot(data, directory, name, title):
     fig, ax = plt.subplots()
@@ -162,20 +179,7 @@ if __name__ == '__main__':
         use_cuda=True,
         ent_coeff=0.01
     )
-    num_envs = 4096
+    num_envs = 256
 
-    seed = np.random.randint(0, 10000)
-    Js, Rs, Es, Vs, INFOs = experiment(alg=PPO, num_envs=num_envs, n_epochs=40, n_steps=4096*24*50, n_steps_per_fit=4096*24,
-                   n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params, seed=seed)
-    
-    dir = "plots/a1_effort_ppo/" + str(time.time())
-    os.makedirs(dir)
-    create_plot([Js], dir, "J", f"PPO - discounted Return: {seed}")
-    create_plot([Rs], dir, "R", f"PPO - undiscounted Return: {seed}")
-    create_plot([Es], dir, "E", f"PPO - Entropy: {seed}")
-    create_plot([Vs], dir, "V", f"PPO - value of intial states: {seed}")
-    for key in INFOs[0]:
-        lst_info = []
-        for epi_info in INFOs:
-            lst_info.append(epi_info[key])
-        create_plot([lst_info], dir, key, f"PPO - {key}: {seed}")
+    experiment(alg=MyPPO, num_envs=num_envs, n_epochs=40, n_steps=4096*24*50, n_steps_per_fit=4096*24,
+                   n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params)

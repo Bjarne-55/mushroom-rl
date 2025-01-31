@@ -533,7 +533,7 @@ class TorchBackend(ArrayBackend):
     
     @staticmethod
     def full(shape, value):
-        return torch.full(shape, value)
+        return torch.full(shape, value).to(device=TorchUtils.get_device())
     
     @staticmethod
     def nonzero(array):

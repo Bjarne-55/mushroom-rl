@@ -6,6 +6,8 @@ import torch
 import random
 from mushroom_rl.rl_utils.spaces import Box
 
+#from mushroom_rl.environments.isaacsim_envs.isaac_gym import IsaacGym
+
 class IsaacA1Description(IsaacSim):
     def __init__(self, num_envs, horizon, headless, domain_randomization=True, camera_position=(105, 0, 4), camera_target=(95, 0, 0),
                  usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/a1/a1.usd"):

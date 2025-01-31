@@ -82,7 +82,7 @@ class PPO(OnPolicyDeepAC):
         v_target = v_target.detach()
 
         old_pol_dist = self.policy.distribution_t(state_old)
-        old_log_p = old_pol_dist.log_prob(action)[:, None].detach()
+        old_log_p = old_pol_dist.log_prob(action.to(dtype=torch.float32))[:, None].detach()
 
         self._V.fit(state, v_target, **self._critic_fit_params)
 
