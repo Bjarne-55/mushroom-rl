@@ -168,7 +168,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     #agent = alg(mdp.info, policy, **alg_params)
     #agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1738081594.2672067.zip")
     #agent.set_logger(logger)
-    agent = agent = PPO.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1738194207.8245382.zip")
+    agent = PPO.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1738194207.8245382.zip")
 
     core = VectorCore(agent, mdp)
     """
