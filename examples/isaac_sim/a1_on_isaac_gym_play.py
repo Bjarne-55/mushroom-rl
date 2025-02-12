@@ -1,5 +1,6 @@
 from isaacgym import gymtorch, gymapi, gymutil
 from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
+from mushroom_rl.environments.isaacsim_envs.isaac_gym import IsaacGym
 from mushroom_rl.core import VectorCore, Logger
 from mushroom_rl.algorithms.actor_critic import TRPO, PPO
 
@@ -87,16 +88,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    class CustomA1(IsaacA1Description):
-        def _import_helper_functions(self):
-            from isaacgym.torch_utils import quat_apply, quat_rotate_inverse, torch_rand_float
-            self.quat_apply = quat_apply
-            self.quat_rotate_inverse = quat_rotate_inverse
-            self.torch_rand_float = torch_rand_float
-
-        def render_all(self, env_mask, record=False):
-            self._world.render()
-        
+    class CustomA1(IsaacGym):
         def _modify_observation(self, obs):
             obs = super()._modify_observation(obs)
             new_obs = obs.clone().detach()
@@ -114,7 +106,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
         -3.2056,  3.1754,  1.2843, -4.3905], device='cuda:0').repeat(self.number, 1)
             return super()._preprocess_action(action)
         """
-    mdp = CustomA1(num_envs, 1000, True, True)
+    mdp = IsaacGym(num_envs, 1000, True, True)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
@@ -133,19 +125,20 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
 
     alg_params['critic_params'] = critic_params
 
-    loaded_dict = torch.load("/home/bjarne/GitWorkspace/BachelorThesis/legged_gym/logs/rough_a1/Dec11_10-37-14_/model_1500.pt")
-    policy._mu.model.network.load_state_dict(loaded_dict["model_state_dict"], strict=False)
-    s = loaded_dict["model_state_dict"]["std"]
-    policy._log_sigma = nn.Parameter(s)
-    policy._mu.model.network.to("cuda:0")
+    #loaded_dict = torch.load("/home/bjarne/GitWorkspace/BachelorThesis/legged_gym/logs/rough_a1/Dec11_10-37-14_/model_1500.pt")
+    #policy._mu.model.network.load_state_dict(loaded_dict["model_state_dict"], strict=False)
+    #s = loaded_dict["model_state_dict"]["std"]
+    #policy._log_sigma = nn.Parameter(s)
+    #policy._mu.model.network.to("cuda:0")
 
     agent = alg(mdp.info, policy, **alg_params)
-    file_name = "1738322414.157496.zip"
-    #agent = agent.load(f"/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/{file_name}")
+    file_name = "1739020286.6898088.zip"
+    agent = agent.load(f"/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/{file_name}")
     #agent.set_logger(logger)
 
     core = VectorCore(agent, mdp)
 
+    dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
     dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
 
     J = torch.mean(dataset.discounted_return).to("cpu").item()
@@ -155,12 +148,6 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     INFO = {key: torch.mean(value).to("cpu").item() for key, value in dataset.info.items()}
 
     logger.epoch_info(0, J=J, R=R, entropy=E, V=V)
-
-def create_plot(data, directory, name, title):
-    fig, ax = plt.subplots()
-    plt.title(title)
-    plot_mean_conf(data, ax)
-    plt.savefig(f"{directory}/{name}.png") 
 
 
 if __name__ == '__main__':
