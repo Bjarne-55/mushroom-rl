@@ -1,11 +1,46 @@
+#import isaacgym
 from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
 import torch
 
-TOTAL_TESTED_STEPS = 2000
+NUM_ENV = 64
+TOTAL_TESTED_STEPS = 100
 TOTAL_TESTED_SIM_STEPS = TOTAL_TESTED_STEPS * 4
 
 sim_counter = 0
 step_counter = 0
+
+#legged_gym data
+def load_data(idx):
+    global expected_obs, expected_reward, expected_absorbing, used_actions, expected_torques, expected_written_body_vel
+    global expected_written_joint_pos, expected_written_joint_vel, expected_detail_reward, forces, read_body_rot
+    global read_body_vel, read_joint_pos, read_joint_vel, legged_gym_rand_dof, legged_gym_rand_push
+    global legged_gym_rand_root, legged_gym_rand_command, legged_gym_rand_noise
+
+    expected_obs = torch.load(f"tests/environments/isaac_sim_envs/data/obs_legged_gym_{idx}.pth")
+    expected_reward = torch.load(f"tests/environments/isaac_sim_envs/data/reward_legged_gym_{idx}.pth")
+    expected_absorbing = torch.load(f"tests/environments/isaac_sim_envs/data/reset_legged_gym_{idx}.pth")
+    used_actions = torch.load(f"tests/environments/isaac_sim_envs/data/actions_legged_gym_{idx}.pth")
+
+    expected_torques = torch.load(f"tests/environments/isaac_sim_envs/data/torques_legged_gym_{idx}.pth")
+
+    expected_written_body_vel = torch.load(f"tests/environments/isaac_sim_envs/data/wr_body_vel_legged_gym_{idx}.pth")
+    expected_written_joint_pos = torch.load(f"tests/environments/isaac_sim_envs/data/wr_joint_pos_legged_gym_{idx}.pth")
+    expected_written_joint_vel = torch.load(f"tests/environments/isaac_sim_envs/data/wr_joint_vel_legged_gym_{idx}.pth")
+
+    expected_detail_reward = torch.load(f"tests/environments/isaac_sim_envs/data/detail_reward_legged_gym_{idx}.pth")
+
+    forces = torch.load(f"tests/environments/isaac_sim_envs/data/contact_forces_legged_gym_{idx}.pth")
+
+    read_body_rot = torch.load(f"tests/environments/isaac_sim_envs/data/body_rot_legged_gym_{idx}.pth")
+    read_body_vel = torch.load(f"tests/environments/isaac_sim_envs/data/body_vel_legged_gym_{idx}.pth")
+    read_joint_pos = torch.load(f"tests/environments/isaac_sim_envs/data/joint_pos_legged_gym_{idx}.pth")
+    read_joint_vel = torch.load(f"tests/environments/isaac_sim_envs/data/joint_vel_legged_gym_{idx}.pth")
+
+    legged_gym_rand_dof = torch.load(f"tests/environments/isaac_sim_envs/data/rand_dof_legged_gym_{idx}.pth")
+    legged_gym_rand_push = torch.load(f"tests/environments/isaac_sim_envs/data/rand_push_legged_gym_{idx}.pth")
+    legged_gym_rand_root = torch.load(f"tests/environments/isaac_sim_envs/data/rand_root_legged_gym_{idx}.pth")
+    legged_gym_rand_command = torch.load(f"tests/environments/isaac_sim_envs/data/rand_command_legged_gym_{idx}.pth")
+    legged_gym_rand_noise = torch.load(f"tests/environments/isaac_sim_envs/data/rand_noise_legged_gym_{idx}.pth")
 
 def quat_apply(a, b):
     shape = b.shape
@@ -38,7 +73,9 @@ class MockWorld:
 
 class MockCollisionHelper:
     def __init__(self):
-        forces = torch.load("tests/environments/isaac_sim_envs/data/contact_forces_legged_gym.pth")
+        self.calc_forces_buffer()
+
+    def calc_forces_buffer(self):
         feet_idx = torch.tensor([ 4,  8, 12, 16])
         lower_body_idx = torch.tensor([ 2,  6, 10, 14,  3,  7, 11, 15])
         body_idx = torch.tensor([0])
@@ -61,11 +98,6 @@ class MockTask:
         self.collision_helper = MockCollisionHelper()
         self.counter = 0
 
-        self.read_body_rot = torch.load("tests/environments/isaac_sim_envs/data/body_rot_legged_gym.pth")
-        self.read_body_vel = torch.load("tests/environments/isaac_sim_envs/data/body_vel_legged_gym.pth")
-        self.read_joint_pos = torch.load("tests/environments/isaac_sim_envs/data/joint_pos_legged_gym.pth")
-        self.read_joint_vel = torch.load("tests/environments/isaac_sim_envs/data/joint_vel_legged_gym.pth")
-
         self.write_body_vel = []
         self.write_joint_pos = []
         self.write_joint_vel = []
@@ -85,13 +117,15 @@ class MockTask:
         return obs_low, obs_high
     
     def get_action_limits(self):
-        return self.get_joint_max_efforts()
+        return -self.get_joint_max_efforts(), self.get_joint_max_efforts()
     
     def get_joint_pos_limits(self):
-        return torch.tensor([[-0.8029, -1.0472, -2.6965, -0.8029, -1.0472, -2.6965, -0.8029, -1.0472,
-         -2.6965, -0.8029, -1.0472, -2.6965],
-        [ 0.8029,  4.1888, -0.9163,  0.8029,  4.1888, -0.9163,  0.8029,  4.1888,
-         -0.9163,  0.8029,  4.1888, -0.9163]], device=self.device)
+        return torch.tensor([[-0.80285138, -1.04719758, -2.69653344, -0.80285138, -1.04719758,
+         -2.69653344, -0.80285138, -1.04719758, -2.69653344, -0.80285138,
+         -1.04719758, -2.69653344],
+        [ 0.80285138,  4.18879032, -0.91629779,  0.80285138,  4.18879032,
+         -0.91629779,  0.80285138,  4.18879032, -0.91629779,  0.80285138,
+          4.18879032, -0.91629779]], device='cuda:0')
     
     def get_joint_max_efforts(self):
         return torch.tensor([20., 55., 55., 20., 55., 55., 20., 55., 55., 20., 55., 55.], device=self.device)
@@ -113,17 +147,17 @@ class MockTask:
             env_indices = torch.arange(0, self.num_envs, 1, dtype=int, device=self.device)
         env_indices = env_indices.to("cpu")
         if name == "body_rot":
-            return self.read_body_rot[sim_counter, env_indices].to("cuda:0")
+            return read_body_rot[sim_counter, env_indices].to("cuda:0")
         elif name == "body_vel":
-            return self.read_body_vel[sim_counter, env_indices].to("cuda:0")
+            return read_body_vel[sim_counter, env_indices].to("cuda:0")
         elif name == "base_lin_vel":
-            return self.read_body_vel[sim_counter, env_indices, :3].to("cuda:0")
+            return read_body_vel[sim_counter, env_indices, :3].to("cuda:0")
         elif name == "base_ang_vel":
-            return self.read_body_vel[sim_counter, env_indices, 3:6].to("cuda:0")
+            return read_body_vel[sim_counter, env_indices, 3:6].to("cuda:0")
         elif name == "joint_pos":
-            return self.read_joint_pos[sim_counter, env_indices].to("cuda:0")
+            return read_joint_pos[sim_counter, env_indices].to("cuda:0")
         elif name == "joint_vel":
-            return self.read_joint_vel[sim_counter, env_indices].to("cuda:0")
+            return read_joint_vel[sim_counter, env_indices].to("cuda:0")
         raise NotImplementedError()
     
     def apply_action(self, action, env_indices=None):
@@ -142,11 +176,6 @@ class MockTask:
         pass
 
 import inspect
-
-legged_gym_rand_dof = torch.load("tests/environments/isaac_sim_envs/data/rand_dof_legged_gym.pth")
-legged_gym_rand_push = torch.load("tests/environments/isaac_sim_envs/data/rand_push_legged_gym.pth")
-legged_gym_rand_root = torch.load("tests/environments/isaac_sim_envs/data/rand_root_legged_gym.pth")
-legged_gym_rand_command = torch.load("tests/environments/isaac_sim_envs/data/rand_command_legged_gym.pth")
 
 counter_rand_dof = 0
 counter_rand_push = 0
@@ -174,7 +203,6 @@ def torch_rand_float(lower, upper, shape, device):
     raise NotImplementedError()
 
 from unittest.mock import patch
-legged_gym_rand_noise = torch.load("tests/environments/isaac_sim_envs/data/rand_noise_legged_gym.pth")
 counter_rand_noise = 0
 inverted_new_obs_order = None
 def mock_rand_like(tensor):
@@ -240,21 +268,9 @@ class MockIsaacA1(IsaacA1Description):
         global counter_rand_noise
         counter_rand_noise -= 1 #in legged gym reset doesn't have extra observation calculation
 
-NUM_ENV = 4096
 def test_run():
-    expected_obs = torch.load("tests/environments/isaac_sim_envs/data/obs_legged_gym.pth")
-    expected_reward = torch.load("tests/environments/isaac_sim_envs/data/reward_legged_gym.pth")
-    expected_absorbing = torch.load("tests/environments/isaac_sim_envs/data/reset_legged_gym.pth")
-    used_actions = torch.load("tests/environments/isaac_sim_envs/data/actions_legged_gym.pth")
-
-    expected_torques = torch.load("tests/environments/isaac_sim_envs/data/torques_legged_gym.pth")
-
-    expected_written_body_vel = torch.load("tests/environments/isaac_sim_envs/data/wr_body_vel_legged_gym.pth")
-    expected_written_joint_pos = torch.load("tests/environments/isaac_sim_envs/data/wr_joint_pos_legged_gym.pth")
-    expected_written_joint_vel = torch.load("tests/environments/isaac_sim_envs/data/wr_joint_vel_legged_gym.pth")
-
-    expected_detail_reward = torch.load("tests/environments/isaac_sim_envs/data/detail_reward_legged_gym.pth")
-
+    load_data(0)
+    torch.set_printoptions(precision=8)
     a1 = MockIsaacA1(NUM_ENV, 1000, True, True)
 
     env_mask = torch.ones((NUM_ENV, ), dtype=bool, device="cuda:0")
@@ -263,56 +279,72 @@ def test_run():
 
     current_episode_length = torch.zeros(NUM_ENV, dtype=int, device="cuda:0")
     
-    for i in range(TOTAL_TESTED_STEPS):
-        #TODO test obs correct
-        env_mask = torch.ones((NUM_ENV, ), dtype=bool, device="cuda:0")
+    for h in range(1):
+        if h != 0:
+            print("finished dataset, go to next 2000 steps")
+            load_data(h)
+            a1._task.collision_helper.calc_forces_buffer()
+            i = 0
+            global sim_counter, step_counter, counter_rand_dof, counter_rand_push, counter_rand_root, counter_rand_command, counter_rand_noise
+            sim_counter = 0
+            step_counter = 0
+            counter_rand_dof = 0
+            counter_rand_push = 0
+            counter_rand_root = 0
+            counter_rand_command = 0
+            counter_rand_noise = 0
+        for i in range(TOTAL_TESTED_STEPS):
+            #TODO test obs correct
+            env_mask = torch.ones((NUM_ENV, ), dtype=bool, device="cuda:0")
 
-        action = used_actions[i].to("cuda:0")
+            action = used_actions[i].to("cuda:0")
 
-        obs, reward, absorbing, info = a1.step_all(env_mask, action)
+            obs, reward, absorbing, info = a1.step_all(env_mask, action)
 
-        current_episode_length += 1
+            current_episode_length += 1
 
-        absorbing = torch.logical_or(absorbing, current_episode_length > 1001)
+            absorbing = torch.logical_or(absorbing, current_episode_length > 1001)
 
-        absorbing = absorbing.to("cuda:0")
-        if torch.any(absorbing):
-            obs_2, info_2 = a1.reset_all(absorbing)
-            obs[absorbing] = obs_2[absorbing]
-            current_episode_length[absorbing] = 0
+            absorbing = absorbing.to("cuda:0")
+            if torch.any(absorbing):
+                obs_2, info_2 = a1.reset_all(absorbing)
+                obs[absorbing] = obs_2[absorbing]
+                current_episode_length[absorbing] = 0
 
-        assert torch.allclose(expected_obs[i].to("cuda:0"), obs, atol=1e-4)
-        assert torch.allclose(expected_absorbing[i].to("cuda:0"), absorbing, atol=1e-4)
+            assert torch.allclose(expected_obs[i].to("cuda:0"), obs, atol=5e-07)
+            assert torch.equal(expected_absorbing[i].to("cuda:0"), absorbing)
 
-        assert len(expected_detail_reward[i]) == len(info)
+            assert len(expected_detail_reward[i]) == len(info)
 
-        for key in expected_detail_reward[i]:#TODO ignore terminated rewards
-            assert torch.allclose(expected_detail_reward[i][key].to("cuda:0"), info[key], atol=1e-4)
-        assert torch.allclose(expected_reward[i].to("cuda:0"), reward, atol=1e-4)
+            for key in expected_detail_reward[i]:#TODO ignore terminated rewards
+                assert torch.allclose(expected_detail_reward[i][key].to("cuda:0"), info[key], atol=1e-07)
+            assert torch.allclose(expected_reward[i].to("cuda:0"), reward, atol=1e-07)
 
-        for j in range(4):
-            applied_torque, env_ids = a1._task.applied_actions[j]
-            expected_env_ids = torch.arange(0, NUM_ENV, 1, dtype=int)
-            assert torch.allclose(expected_torques[i * 4 + j].to("cuda:0"), applied_torque)
-            assert torch.equal(expected_env_ids.to("cuda:0"), env_ids)
-            
-        #TODO test written
-        for expected, actual, name in [
-            (expected_written_body_vel, a1._task.write_body_vel, "body_vel"), 
-            (expected_written_joint_pos, a1._task.write_joint_pos, "joint_pos"), 
-            (expected_written_joint_vel, a1._task.write_joint_vel, "joint_vel")
-        ]:
-            if i + 1 in expected:
-                assert len(expected[i + 1]) == len(actual)
-                for (expected_value, expected_env_ids), (actual_value, actual_env_ids) in zip(expected[i + 1], actual):
-                    assert torch.equal(expected_env_ids.to("cuda:0"), actual_env_ids), f"Written {name} env_ids are not the same as expected env_ids"
-                    assert torch.allclose(expected_value.to("cuda:0"), actual_value), f"Written {name} values are not the same as expected values"
+            for j in range(4):
+                applied_torque, env_ids = a1._task.applied_actions[j]
+                expected_env_ids = torch.arange(0, NUM_ENV, 1, dtype=int)
+                assert torch.allclose(expected_torques[i * 4 + j].to("cuda:0"), applied_torque, atol=1e-08)
+                assert torch.equal(expected_env_ids.to("cuda:0"), env_ids)
                 
+            #TODO test written
+            for expected, actual, name in [
+                (expected_written_body_vel, a1._task.write_body_vel, "body_vel"), 
+                (expected_written_joint_pos, a1._task.write_joint_pos, "joint_pos"), 
+                (expected_written_joint_vel, a1._task.write_joint_vel, "joint_vel")
+            ]:
+                if i + 1 in expected:
+                    assert len(expected[i + 1]) == len(actual)
+                    for (expected_value, expected_env_ids), (actual_value, actual_env_ids) in zip(expected[i + 1], actual):
+                        assert torch.equal(expected_env_ids.to("cuda:0"), actual_env_ids), f"Written {name} env_ids are not the same as expected env_ids"
+                        assert torch.allclose(expected_value.to("cuda:0"), actual_value, atol=1e-08), f"Written {name} values are not the same as expected values"
+                    
 
-        a1._task.write_body_vel = []
-        a1._task.write_joint_pos = []
-        a1._task.write_joint_vel = []
-        a1._task.applied_actions = []
+            a1._task.write_body_vel = []
+            a1._task.write_joint_pos = []
+            a1._task.write_joint_vel = []
+            a1._task.applied_actions = []
 
 
-        env_mask = absorbing
+            env_mask = absorbing
+
+test_run()
