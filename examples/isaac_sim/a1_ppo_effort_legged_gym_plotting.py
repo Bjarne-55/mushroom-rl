@@ -20,7 +20,6 @@ from mushroom_rl.utils.plot import plot_mean_conf
 import matplotlib.pyplot as plt
 import os
 
-"""
 class Network(nn.Module):
     def __init__(self, input_shape, output_shape, n_features, **kwargs):
         super(Network, self).__init__()
@@ -49,8 +48,8 @@ class Network(nn.Module):
         a = self._h4(features3)
 
         return a
-"""
 
+"""
 class Network(nn.Module):
     def __init__(self, input_shape, output_shape, n_features, **kwargs):
         super(Network, self).__init__()
@@ -83,7 +82,7 @@ class A1LeggedGymActor(IsaacA1Description):
         new_obs[:, 36:48] = self.observation_helper.get_from_obs(obs, "actions")
 
         return new_obs
-
+"""
 
 def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
                alg_params, policy_params, seed):
@@ -92,7 +91,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = A1LeggedGymActor(num_envs, 1000, True, True)
+    mdp = IsaacA1Description(num_envs, 1000, True, True)
     mdp.seed(seed)
     
     critic_params = dict(network=Network,
@@ -123,7 +122,8 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     Es = []
     Vs = []
     INFOs = []
-
+    
+    """
     dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
 
     J = torch.mean(dataset.discounted_return).to("cpu").item()
@@ -138,6 +138,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     INFOs.append(INFO)
 
     logger.epoch_info(0, J=J, R=R, entropy=E, V=V)
+    """
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
@@ -192,8 +193,8 @@ if __name__ == '__main__':
     )
     num_envs = 4096
 
-    seed = np.random.randint(0, 10000)
-    Js, Rs, Es, Vs, INFOs = experiment(alg=PPO, num_envs=num_envs, n_epochs=40, n_steps=4096*24*50, n_steps_per_fit=4096*24,
+    seed = 1
+    Js, Rs, Es, Vs, INFOs = experiment(alg=PPO, num_envs=num_envs, n_epochs=30, n_steps=4096*24*50, n_steps_per_fit=4096*24,
                    n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params, seed=seed)
     
     dir = "plots/a1_effort_ppo/" + str(time.time())
