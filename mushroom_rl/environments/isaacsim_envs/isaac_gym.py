@@ -1,5 +1,5 @@
 from isaacgym import gymtorch, gymapi, gymutil
-from mushroom_rl.environments import IsaacSim
+from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
 from mushroom_rl.utils.isaac_sim import ObservationType, ActionType, ObservationHelper
 from mushroom_rl.core import VectorizedEnvironment, MDPInfo, ArrayBackend
 from mushroom_rl.rl_utils.spaces import Box
@@ -98,7 +98,7 @@ class IsaacGymTask:
         self.gym.prepare_sim(self.sim)
 
         self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
-        cam_pos = gymapi.Vec3(10, 10, 10)
+        cam_pos = gymapi.Vec3(5, 5, 5)
         cam_target = gymapi.Vec3(0, 0, 0)
         self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
 
@@ -134,7 +134,7 @@ class IsaacGymTask:
         return obs_low, obs_high
     
     def get_action_limits(self):
-        return torch.zeros((self.num_envs, 12))
+        return torch.zeros((self.num_envs, 12)), torch.zeros((self.num_envs, 12))
     
     def get_joint_pos_limits(self):
         return torch.tensor([[-0.8029, -1.0472, -2.6965, -0.8029, -1.0472, -2.6965, -0.8029, -1.0472,
@@ -146,7 +146,7 @@ class IsaacGymTask:
         return torch.tensor([20., 55., 55., 20., 55., 55., 20., 55., 55., 20., 55., 55.], device='cuda:0') 
     
     def write_data(self, name, value, env_indices=None):
-        if env_indices.shape[0] == 0:
+        if env_indices is not None and env_indices.shape[0] == 0:
             return
         if env_indices is None:
             env_indices = torch.arange(0, self.num_envs, 1, dtype=int, device=self.device)
@@ -165,6 +165,14 @@ class IsaacGymTask:
             self.gym.set_dof_state_tensor_indexed(self.sim,
                 gymtorch.unwrap_tensor(self.dof_state),
                 gymtorch.unwrap_tensor(env_indices.to(dtype=torch.int32)), env_indices.shape[0])
+        elif name == "body_rot":#Careful not good implemented
+            self.root_states[env_indices, 3:7] = value
+            self.gym.set_actor_root_state_tensor_indexed(
+                self.sim, 
+                gymtorch.unwrap_tensor(self.root_states),
+                gymtorch.unwrap_tensor(env_indices.to(dtype=torch.int32)), 
+                env_indices.shape[0]
+            )
         else:
             raise NotImplementedError()
     
@@ -186,7 +194,7 @@ class IsaacGymTask:
         raise NotImplementedError()
     
     def apply_action(self, action, env_indices=None):
-        if env_indices.shape[0] == 0:
+        if env_indices is not None and env_indices.shape[0] == 0:
             return
         if env_indices is None:
             env_indices = torch.arange(0, self.num_envs, 1, dtype=int, device=self.device)
@@ -252,45 +260,47 @@ class IsaacGymTask:
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
             gymtorch.unwrap_tensor(self.root_states),
             gymtorch.unwrap_tensor(env_indices.to(dtype=torch.int32)), env_indices.shape[0])
+        
+    def reset(self):#world
+        pass
 
 
-class IsaacGym(IsaacSim):
-    def __init__(self, usd_path, actuation_spec, observation_spec, backend, device, collision_between_envs, 
-                 num_envs, env_spacing, gamma, horizon, timestep=None, n_substeps=1, n_intermediate_steps=1, 
-                 additional_data_spec=None, collision_groups=None, action_type=None, headless=True,
-                 physics_material_spec=None, sim_params=None, camera_position=(5, 0, 4), camera_target=(0, 0, 0)):
-        self._headless = headless
-        self._viewer = None
+class IsaacGym(IsaacA1Description):
+    def __init__(self, num_envs, horizon, headless, domain_randomization=True):
+        super().__init__(num_envs, horizon, headless, domain_randomization)
+        obs_high = torch.full((48, ), torch.inf, device="cuda:0")
+        self._mdp_info.observation_space = Box(-obs_high, obs_high, data_type=obs_high.dtype)
+        action_high = torch.full((12, ), torch.inf, device="cuda:0")
+        self._mdp_info.action_space = Box(-action_high, action_high, data_type=action_high.dtype)
+
+    def _create_simulation_app(self, headless):
+        pass
+
+    def _apply_carb_settings(self):
+        pass
+
+    def _create_world(self, timestep, custom_sim_params=None):
         self._timestep = timestep
+        self._world = None
 
-        self._backend = backend
-        self._device = device
-        TorchUtils.set_default_device(device)
-
-        self._action_type = action_type
-        self._n_intermediate_steps = n_intermediate_steps
-        self._n_substeps = n_substeps
-
-        # Initialize world and tasks
-        self._task = IsaacGymTask(num_envs, device)
+    def _set_task(self, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, actuation_spec, additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target):
+        self._task = IsaacGymTask(num_envs, "cuda:0")
         self._world = self._task
 
-        observation_limits = self._task.get_observation_limits()
-        observation_space = Box(*observation_limits)
-        self.observation_helper = ObservationHelper(observation_spec, observation_limits, backend, num_envs, device)
-
-        action_limits = self._task.get_action_limits()
-        action_space = Box(action_limits[0].to(self._device), action_limits[1].to(self._device))
-
-        mdp_info = MDPInfo(observation_space, action_space, gamma, horizon, self.dt, backend)
-        mdp_info = self._modify_mdp_info(mdp_info)
-
-        self._recompute_action_per_step = type(self)._compute_action != IsaacSim._compute_action
-        
-        VectorizedEnvironment.__init__(self, mdp_info, num_envs)
+    def render_all(self, env_mask, record=False):
+        self._world.render()
     
+    def _import_helper_functions(self):
+        from isaacgym.torch_utils import quat_apply, quat_rotate_inverse, torch_rand_float
+        self.torch_rand_float = torch_rand_float
+        self.quat_apply = quat_apply
+        self.quat_rotate_inverse = quat_rotate_inverse
+
     def stop(self):
-        return
-    
+        pass
+
     def __del__(self):
-        return 
+        pass
+
+    def _create_simulation_app(self, headless):
+        return None

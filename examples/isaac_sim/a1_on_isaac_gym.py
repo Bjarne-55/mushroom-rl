@@ -1,7 +1,8 @@
 from isaacgym import gymtorch, gymapi, gymutil
-from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
+from mushroom_rl.environments.isaacsim_envs.isaac_gym import IsaacGym
 from mushroom_rl.core import VectorCore, Logger
 from mushroom_rl.algorithms.actor_critic import TRPO, PPO
+from mushroom_rl.algorithms.actor_critic.deep_actor_critic.ppo_nikita import NikitaPPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
 from mushroom_rl.utils import TorchUtils
@@ -57,15 +58,8 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    class CustomA1(IsaacA1Description):
-        def _import_helper_functions(self):
-            from isaacgym.torch_utils import quat_apply, quat_rotate_inverse, torch_rand_float
-            self.quat_apply = quat_apply
-            self.quat_rotate_inverse = quat_rotate_inverse
-            self.torch_rand_float = torch_rand_float
-
-        def render_all(self, env_mask, record=False):
-            self._world.render()
+    class CustomA1(IsaacGym):
+        pass
     mdp = CustomA1(num_envs, 1000, True, True)
     
     critic_params = dict(network=Network,
@@ -95,10 +89,9 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     Rs = []
     Es = []
     Vs = []
-    INFOs = []
+    #INFOs = []
 
-    """
-    dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
+    dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
 
     J = torch.mean(dataset.discounted_return).to("cpu").item()
     R = torch.mean(dataset.undiscounted_return.to("cpu")).item()
@@ -109,10 +102,9 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     Rs.append(R)
     Es.append(E)
     Vs.append(V)
-    INFOs.append(INFO)
+    #INFOs.append(INFO)
 
     logger.epoch_info(0, J=J, R=R, entropy=E, V=V)
-    """
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
@@ -127,7 +119,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
         Rs.append(R)
         Es.append(E)
         Vs.append(V)
-        INFOs.append(INFO)
+        #INFOs.append(INFO)
 
         logger.epoch_info(it+1, J=J, R=R, entropy=E, V=V)
         agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
@@ -137,7 +129,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     core.evaluate(n_episodes=n_episodes_test, render=True, record=False)
     #agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
 
-    return Js, Rs, Es, Vs, INFOs
+    return Js, Rs, Es, Vs
 
 def create_plot(data, directory, name, title):
     fig, ax = plt.subplots()
@@ -164,9 +156,9 @@ if __name__ == '__main__':
     )
     num_envs = 4096
 
-    seed = np.random.randint(0, 10000)
-    Js, Rs, Es, Vs, INFOs = experiment(alg=PPO, num_envs=num_envs, n_epochs=40, n_steps=4096*24*50, n_steps_per_fit=4096*24,
-                   n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params, seed=seed)
+    seed = 1
+    Js, Rs, Es, Vs = experiment(alg=PPO, num_envs=num_envs, n_epochs=10, n_steps=4096*24*200, n_steps_per_fit=4096*24,
+                   n_episodes_test=128, alg_params=ppo_params, policy_params=policy_params, seed=seed)
     
     dir = "plots/a1_effort_ppo/" + str(time.time())
     os.makedirs(dir)
@@ -174,8 +166,10 @@ if __name__ == '__main__':
     create_plot([Rs], dir, "R", f"PPO - undiscounted Return: {seed}")
     create_plot([Es], dir, "E", f"PPO - Entropy: {seed}")
     create_plot([Vs], dir, "V", f"PPO - value of intial states: {seed}")
+    """
     for key in INFOs[0]:
         lst_info = []
         for epi_info in INFOs:
             lst_info.append(epi_info[key])
         create_plot([lst_info], dir, key, f"PPO - {key}: {seed}")
+    """
