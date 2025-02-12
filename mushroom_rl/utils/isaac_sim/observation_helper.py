@@ -1,5 +1,3 @@
-import numpy as np
-import torch
 from enum import Enum
 from mushroom_rl.core.array_backend import ArrayBackend
 
@@ -96,8 +94,10 @@ class ObservationHelper:
 
         Args: 
             observation_spec (list): A list containing the names of data that should be made available to the agent as
-               an observation and their type (ObservationType). They are combined with a path, which is used to access
-               the data. An entry in the list is given by: (key, name, type). The name can later be used to retrieve
+               an observation and their type (ObservationType). They are combined with a path, which is used to access the prim,
+               and a list or a single string with name of the subelements of prim which should be accessed. For example a subbody 
+               or a joint of an ArticulationView
+               An entry in the list is given by: (key, name, type, element). The name can later be used to retrieve
                specific observations.
             observation_limits (torch.tensor, np.ndarray): A tensor or array containing the maximum and minimum value
                 for all observations in observation_spec. First element are the minimum values and second element the
@@ -113,6 +113,7 @@ class ObservationHelper:
         self._backend = backend
         self._num_env = num_env
         self._device = device
+        self._arr_backend = ArrayBackend.get_array_backend(self._backend)
 
         self.obs_idx_map = self._compute_obs_idx_map()
         self.obs_types_idx_map = self._compute_type_idx_map()
@@ -131,7 +132,7 @@ class ObservationHelper:
             data given in the dictionary.
         """
         size = self.obs_length
-        obs = ArrayBackend.get_array_backend(self._backend).empty((self._num_env, size), self._device)
+        obs = ArrayBackend.get_array_backend(self._backend).zeros((self._num_env, size))
 
         for name, indices in self.obs_idx_map.items():
             if name in data:
@@ -177,21 +178,20 @@ class ObservationHelper:
             min_value (float, np.ndarray, torch.tensor): The lower bound for the observation.
             max_value (float, np.ndarray, torch.tensor): The upper bound for the observation
         """
-        array_backend = ArrayBackend.get_array_backend(self._backend)
         idx = self.obs_length
-        self.obs_idx_map[name] = list(range(idx, idx + length))
+        self.obs_idx_map[name] = self._arr_backend.from_list(list(range(idx, idx + length)))
 
         if hasattr(min_value, "__len__"): 
             low = ArrayBackend.convert(min_value, to=self._backend)
         else:
-            low = array_backend.full((length, ), min_value)
-        self._obs_low = array_backend.concatenate([self._obs_low, low])
+            low = self._arr_backend.full((length, ), min_value)
+        self._obs_low = self._arr_backend.concatenate([self._obs_low, low])
 
         if hasattr(max_value, "__len__"): 
             high = ArrayBackend.convert(max_value, to=self._backend)
         else:
-            high = array_backend.full((length, ), max_value)
-        self._obs_high = array_backend.concatenate([self._obs_high, high])
+            high = self._arr_backend.full((length, ), max_value)
+        self._obs_high = self._arr_backend.concatenate([self._obs_high, high])
     
     def remove_obs_idx(self, name, index):#TODO maybe add
         pass
@@ -208,9 +208,8 @@ class ObservationHelper:
         for name, _, obs_type, element_names in self._observation_spec:
             n_elements = len(element_names) if isinstance(element_names, list) else 1
             end_index = index + obs_type.length * n_elements
-            mapping[name] = list(range(index, end_index))
+            mapping[name] = self._arr_backend.from_list(list(range(index, end_index)))
             index = end_index
-        mapping = {key: torch.tensor(value, device=self._device) for key, value in mapping.items()}
         return mapping
     
     def _compute_type_idx_map(self):
@@ -227,7 +226,7 @@ class ObservationHelper:
             for name in names:
                 indices.extend(self.obs_idx_map[name])
             mapping[obs_type] = indices
-        mapping = {key: torch.tensor(value, device=self._device) for key, value in mapping.items()}
+        mapping = {key: self._arr_backend.from_list(value) for key, value in mapping.items()}
         return mapping
 
     @property
@@ -236,6 +235,6 @@ class ObservationHelper:
     
     @property
     def obs_length(self):
-        return max(map(lambda x: x[-1], self.obs_idx_map.values())) + 1
+        return max(map(lambda x: x[-1].item(), self.obs_idx_map.values())) + 1
 
 

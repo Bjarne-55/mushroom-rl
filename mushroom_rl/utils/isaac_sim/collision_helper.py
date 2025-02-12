@@ -62,8 +62,7 @@ class CollisionHelper:
                 lambda acc, val: acc + val if val not in acc else acc, [value for key, value in self.collision_groups.items() if key != group_name], []
             )
             self._collision_groups_indices[group_name] = {key: self._arr_backend.from_list([possible_partners.index(value) for value in self.collision_groups[key]]) for key in self.collision_groups if key != group_name}
-            #possible_partners = [self.BASE_ENV_PATH + "/.*/Robot" + partner if not partner.startswith("/World/") else partner for partner in possible_partners]
-            possible_partners = ["/World/groundPlane/collisionPlane"]
+            possible_partners = [self.BASE_ENV_PATH + "/.*/Robot" + partner if not partner.startswith("/World/") else partner for partner in possible_partners]
             for path in group:
                 if path in self._views:
                     continue
@@ -90,15 +89,6 @@ class CollisionHelper:
 
         self.index = 0
 
-    def gather_collisions(self):#TODO check Buffer
-        """
-        Buffers the collisions forces of all views at every intermediate steps.
-        """
-        for path, view in self._views.items():
-            self._collision_force_buffer[path][self.index] = view.get_contact_force_matrix(clone=True)
-        
-        self.index = (self.index + 1) % self._n_intermediate_steps
-
     def get_collision_force(self, group1, group2, selector=None, dt=1.0):
         """
         Computes the collision forces or impulses between two collision groups.
@@ -117,7 +107,7 @@ class CollisionHelper:
             processed by the `selector` function.
         """
         if selector is None:
-            selector = lambda x: self._arr_backend.max(self._arr_backend.max(self._arr_backend.norm(x, dim=3), dim=2), dim=0)
+            selector = lambda x: self._arr_backend.max(self._arr_backend.norm(x, dim=2), dim=1)
 
         if self._collision_group_contains_world[group2]:
             prims = self.collision_groups[group1]
@@ -126,7 +116,7 @@ class CollisionHelper:
             prims = self.collision_groups[group2]
             indices_prims2 = self._collision_groups_indices[group2][group1]
         
-        forces = self._arr_backend.concatenate([self._collision_force_buffer[p][:, :, indices_prims2] / dt for p in prims], dim=2)
+        forces = torch.cat([self._views[p].get_contact_force_matrix(clone=False, dt=dt)[:, indices_prims2] for p in prims], dim=1)
 
         return selector(forces)
     
@@ -172,7 +162,7 @@ class CollisionHelper:
             A tensor or array containing the count of collisions
         """
         if selector is None:
-            selector=lambda x: self._arr_backend.max(self._arr_backend.norm(x, dim=3), dim=0)
+            selector=lambda x: self._arr_backend.norm(x, dim=2)
 
         forces = self.get_collision_force(group1, group2, selector, dt)
         return self._arr_backend.sum(forces > threshold, dim=1)

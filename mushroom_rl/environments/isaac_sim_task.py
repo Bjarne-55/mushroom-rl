@@ -16,6 +16,8 @@ from omni.kit.viewport.utility import get_viewport_from_window_name
 from omni.kit.viewport.utility.camera_state import ViewportCameraState
 import omni.replicator.core as rep
 
+from pxr import PhysxSchema
+
 from mushroom_rl.utils.isaac_sim import ObservationType, CollisionHelper, ActionType
 from mushroom_rl.core.array_backend import ArrayBackend
 from mushroom_rl.utils import TorchUtils
@@ -43,8 +45,10 @@ class IsaacSimTask(BaseTask):
             num_envs (int): Number of parallel environments.
             env_spacing (float): Distance between each environment.
             observation_spec (list): A list containing the names of data that should be made available to the agent as
-               an observation and their type (ObservationType). They are combined with a path, which is used to access
-               the data. An entry in the list is given by: (key, name, type). The name can later be used to retrieve
+               an observation and their type (ObservationType). They are combined with a path, which is used to access the prim,
+               and a list or a single string with name of the subelements of prim which should be accessed. For example a subbody 
+               or a joint of an ArticulationView
+               An entry in the list is given by: (key, name, type, element). The name can later be used to retrieve
                specific observations.
             actuation_spec (list): A list specifying the names of the joints  which should be controllable by the
                agent.
@@ -133,6 +137,8 @@ class IsaacSimTask(BaseTask):
             reset_xform_properties=False
         )
         scene.add(self.robots)
+        self.robots.set_solver_position_iteration_counts(torch.full((self._num_envs, ), 4))
+        self.robots.set_solver_velocity_iteration_counts(torch.full((self._num_envs, ), 4))
 
         scene.add_ground_plane(size=math.ceil(self._num_envs**0.5) * self._env_spacing, static_friction=1., dynamic_friction=1., restitution=0.)
         
@@ -148,11 +154,19 @@ class IsaacSimTask(BaseTask):
         
         for name, path, obs_type, element_names in specifications:
             if path not in self._views:
-                view = RigidPrimView(
-                    prim_paths_expr=self.BASE_ENV_PATH + "/.*/Robot" + path,
-                    name=path.replace("/", "_") + "_view",
-                    reset_xform_properties=False,
-                )
+                prim = stage.GetPrimAtPath(self.ZERO_ENV_PATH + "/Robot" + path)
+                if prim.HasAPI(PhysxSchema.PhysxArticulationAPI):
+                    view = ArticulationView(
+                        prim_paths_expr=self.BASE_ENV_PATH + "/.*/Robot" + path,
+                        name=path.replace("/", "_") + "_view",
+                        reset_xform_properties=False,
+                    )
+                else:
+                    view = RigidPrimView(
+                        prim_paths_expr=self.BASE_ENV_PATH + "/.*/Robot" + path,
+                        name=path.replace("/", "_") + "_view",
+                        reset_xform_properties=False,
+                    )
                 scene.add(view)
                 self._views[path] = view
         
@@ -160,7 +174,7 @@ class IsaacSimTask(BaseTask):
         if self._physics_material_spec is not None:
             self._apply_physics_materials(self._physics_material_spec)
 
-    def post_reset(self):
+    def post_reset(self):#TODO make articulation view flexible so that it can be defined by path
         """
         Called as the last step when resetting the world.
         """
@@ -289,13 +303,13 @@ class IsaacSimTask(BaseTask):
         """
         if self._action_type == ActionType.EFFORT:
             limit = self.get_joint_max_efforts()
-            return -limit, limit
+            return -limit.to(self._device), limit.to(self._device)
         elif self._action_type == ActionType.POSITION:
             limit = self.get_joint_pos_limits()
-            return limit[0], limit[1]
+            return limit[0].to(self._device), limit[1].to(self._device)
         else:
             limit = self.get_joint_max_velocities()
-            return -limit, limit
+            return -limit.to(self._device), limit.to(self._device)
     
     def get_joint_max_efforts(self):
         """
@@ -304,7 +318,7 @@ class IsaacSimTask(BaseTask):
         Returns: 
             A tensor or array containing the maximum effort values for each controlled joint.
         """
-        return self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints)[0].to(self._device)
+        return self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints, clone=True)[0].to(self._device)
     
     def get_joint_pos_limits(self):
         """
@@ -313,7 +327,7 @@ class IsaacSimTask(BaseTask):
         Returns: 
             A tensor or array containing the position limits for each controlled joint.
         """
-        return self.robots.get_dof_limits()[0].to(self._device)[self._controlled_joints].T
+        return self.robots.get_dof_limits()[0].to(self._device)[self._controlled_joints].T.clone()
     
     def get_joint_max_velocities(self):
         """
@@ -352,7 +366,7 @@ class IsaacSimTask(BaseTask):
             view, obs_type, element_idx = self._additionals[name]
         else:
             view, obs_type, element_idx = self._observers[name]
-        return self._read_property(view, obs_type, element_idx=element_idx, env_indices=env_indices)
+        return self._read_property(view, obs_type, element_idx=element_idx, env_indices=env_indices, clone=True)
     
     def set_joint_data(self, value, type, element_idx=None, env_indices=None):
         """
@@ -454,7 +468,8 @@ class IsaacSimTask(BaseTask):
 
         """
         if obs_type == ObservationType.BODY_POS:
-            return view.get_world_poses(indices=env_indices, clone=clone)[0] - self.env_pos
+            env_pos = self.env_pos if env_indices is None else self.env_pos[env_indices]
+            return view.get_world_poses(indices=env_indices, clone=clone)[0] - env_pos
         elif obs_type == ObservationType.BODY_ROT:
             return view.get_world_poses(indices=env_indices, clone=clone)[1]
         elif obs_type == ObservationType.BODY_LIN_VEL:

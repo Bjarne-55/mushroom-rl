@@ -25,8 +25,10 @@ class IsaacSim(VectorizedEnvironment):
             actuation_spec (list): A list specifying the names of the joints  which should be controllable by the
                agent.
             observation_spec (list): A list containing the names of data that should be made available to the agent as
-               an observation and their type (ObservationType). They are combined with a path, which is used to access
-               the data. An entry in the list is given by: (key, name, type). The name can later be used to retrieve
+               an observation and their type (ObservationType). They are combined with a path, which is used to access the prim,
+               and a list or a single string with name of the subelements of prim which should be accessed. For example a subbody 
+               or a joint of an ArticulationView
+               An entry in the list is given by: (key, name, type, element). The name can later be used to retrieve
                specific observations.
             backend (str): Backend for array operations.
             device (str): Compute device (e.g., 'cuda:0').
@@ -91,16 +93,19 @@ class IsaacSim(VectorizedEnvironment):
         self._world.reset()
 
         observation_limits = self._task.get_observation_limits()
-        observation_space = Box(*observation_limits)
+        assert observation_limits[0].dtype == observation_limits[1].dtype
+        observation_space = Box(*observation_limits, data_type=observation_limits[0].dtype)
         self.observation_helper = ObservationHelper(observation_spec, observation_limits, backend, num_envs, device)
 
         action_limits = self._task.get_action_limits()
-        action_space = Box(action_limits[0].to(self._device), action_limits[1].to(self._device))
+        assert action_limits[0].dtype == action_limits[1].dtype
+        action_space = Box(*action_limits, data_type=action_limits[0].dtype)
 
         mdp_info = MDPInfo(observation_space, action_space, gamma, horizon, self.dt, backend)
         mdp_info = self._modify_mdp_info(mdp_info)
 
         self._recompute_action_per_step = type(self)._compute_action != IsaacSim._compute_action
+        self._obs = None #TODO rework
         
         super().__init__(mdp_info, num_envs)
     
@@ -149,13 +154,14 @@ class IsaacSim(VectorizedEnvironment):
 
         if timestep is None:
             self._timestep = self._world.get_physics_dt()
-            self._physics_context.set_physics_dt(dt=self._timestep, substeps=self._n_substeps)
+            self._physics_context.set_physics_dt(dt=self._timestep * self._n_substeps, substeps=self._n_substeps)
         else:
-            self._physics_context.set_physics_dt(dt=timestep, substeps=self._n_substeps)
+            self._physics_context.set_physics_dt(dt=timestep * self._n_substeps, substeps=self._n_substeps)
             self._timestep = timestep
 
         self._world.set_simulation_dt(rendering_dt=self.dt)
         print(f"rendering dt: {self._world.get_rendering_dt()}, physix dt: {self._world.get_physics_dt()}")
+        print(f"uses Fabric: {self._physics_context.use_fabric}, uses gpu_pipeline: {self._physics_context.use_gpu_pipeline}, use_gpu_sim: {self._physics_context.use_gpu_sim}")
 
     def _set_task(self, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, actuation_spec, 
                   additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target):
@@ -223,16 +229,14 @@ class IsaacSim(VectorizedEnvironment):
             self._task.apply_action(ctrl_action[env_indices], env_indices)
             self._world.step(render=not self._headless)
 
-            #self._task.collision_helper.gather_collisions()#TODO completly remove
-
             self._simulation_post_step()
 
             if self._recompute_action_per_step:
-                cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
+                cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
                 cur_obs = self._create_observation(cur_obs)
 
         if not self._recompute_action_per_step:
-            cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
+            cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
             cur_obs = self._create_observation(cur_obs)
 
         self._step_finalize(env_indices)
@@ -241,7 +245,7 @@ class IsaacSim(VectorizedEnvironment):
         reward = self.reward(self._obs, action, cur_obs, absorbing)
         extra_info = self._create_info_dictionary(cur_obs)
 
-        self._obs = cur_obs.clone().detach()
+        self._obs = cur_obs.clone().detach()#TODO maybe only update active envs
 
         cur_obs = self._modify_observation(cur_obs)
         
@@ -267,9 +271,12 @@ class IsaacSim(VectorizedEnvironment):
         self._task.reset_env(env_indices)
         self.setup(env_indices, state)
         
-        obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
+        obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
         obs = self._create_observation(obs)
-        self._obs = obs.clone().detach()
+        if self._obs is None:
+            self._obs = obs.clone().detach()
+        else:
+            self._obs[env_mask] = obs.clone().detach()[env_mask]
 
         info = self._create_info_dictionary(obs)
         obs = self._modify_observation(obs)
