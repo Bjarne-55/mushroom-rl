@@ -6,8 +6,6 @@ import torch
 import random
 from mushroom_rl.rl_utils.spaces import Box
 
-#from mushroom_rl.environments.isaacsim_envs.isaac_gym import IsaacGym
-
 class IsaacA1Description(IsaacSim):
     def __init__(self, num_envs, horizon, headless, domain_randomization=True, camera_position=(105, 0, 4), camera_target=(95, 0, 0),
                  usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/a1/a1.usd"):
@@ -57,7 +55,7 @@ class IsaacA1Description(IsaacSim):
             "gpu_found_lost_aggregate_pairs_capacity": 128*1024, 
             "gpu_total_aggregate_pairs_capacity": 128*1024, 
             "gpu_temp_buffer_capacity": 16777216,
-            "gpu_max_rigid_patch_count": 2 * 81920
+            "gpu_max_rigid_patch_count": 2 * 81920,
         }
         super().__init__(usd_path, self._action_spec, observation_spec, backend, device, collision_between_envs, num_envs, 
                          env_spacing, 0.99, horizon, additional_data_spec=additional_data_spec, collision_groups=collision_groups, 
@@ -65,21 +63,29 @@ class IsaacA1Description(IsaacSim):
                          physics_material_spec=physics_material_spec, sim_params=sim_params, camera_position=camera_position, 
                          camera_target=camera_target) 
         self._import_helper_functions()
-        self._mdp_info.action_space = Box(*((self._task.get_joint_pos_limits() - self._default_joint_angles) / 0.25))
+        action_limits = (self._task.get_joint_pos_limits() - self._default_joint_angles) / 0.25
+        self._mdp_info.action_space = Box(*action_limits, data_type=action_limits[0].dtype)
         
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)
-        self.observation_helper.add_obs("commands", 3, -1, 1)
+        commands_upper = torch.tensor([1., 1., np.pi], device=device)
+        self.observation_helper.add_obs("commands", 3, -commands_upper, commands_upper)
         self.observation_helper.add_obs("actions", self.NUM_DOFS, self.info.action_space.low, self.info.action_space.high)
-        self._mdp_info.observation_space = Box(*self.observation_helper.obs_limits)
 
-        self.commands = torch.zeros(num_envs, 4, dtype=torch.float, device=device)
-        
         self.normalization_obs_vec = self._get_obs_normilization_vec()
         self.noise_scale_vec = self._get_noise_scale_vec()
 
+        obs_low, obs_high = self.observation_helper.obs_limits
+        dof_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
+        obs_low[dof_pos_indices] -= self._default_joint_angles
+        obs_high[dof_pos_indices] -= self._default_joint_angles
+        new_obs_low = obs_low * self.normalization_obs_vec - self.noise_scale_vec
+        new_obs_high = obs_high * self.normalization_obs_vec + self.noise_scale_vec
+        self._mdp_info.observation_space = Box(new_obs_low, new_obs_high, data_type=new_obs_high.dtype)
+
+        self.commands = torch.zeros(num_envs, 4, dtype=torch.float, device=device)
+
         self._soft_dof_pos_limits = self._get_soft_dof_pos_limit()
         
-
         self._actions = torch.zeros((num_envs, self.NUM_DOFS), device=device)
 
         self.feet_air_time = torch.zeros((num_envs, 4), device=device)
@@ -95,6 +101,8 @@ class IsaacA1Description(IsaacSim):
         self.step_counter = 0
 
         self._gravity = torch.tensor([0., 0., -1.], device=self._device).repeat((self.number, 1))
+
+        self._obs = None
     
     def _import_helper_functions(self):
         from omni.isaac.core.utils.torch.rotations import quat_apply, quat_rotate_inverse
@@ -130,7 +138,7 @@ class IsaacA1Description(IsaacSim):
         self.commands[:, 2] = torch.clip(0.5*self.wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
 
         #domain randomization: push Robot
-        push_interval = np.ceil(15 / self.dt)
+        push_interval = np.ceil(15 / self.dt) + 1
         if self.domain_randomization and (self.step_counter % push_interval == 0):
             self._push_robots(env_indices)
     
@@ -185,15 +193,16 @@ class IsaacA1Description(IsaacSim):
         return v
     
     def _get_soft_dof_pos_limit(self):
-        dof_pos_limits = torch.zeros(self.NUM_DOFS, 2, dtype=torch.float, device=self._device, requires_grad=False)
-        low = self.info.observation_space.low[self.observation_helper.obs_idx_map["joint_pos"]]
-        high = self.info.observation_space.high[self.observation_helper.obs_idx_map["joint_pos"]]
+        soft_dof_pos_limits = torch.zeros(self.NUM_DOFS, 2, device=self._device, requires_grad=False)
+        pos_limit = self._task.get_joint_pos_limits()
+        low = pos_limit[0]
+        high = pos_limit[1]
         
         middle = (low + high) / 2
         r = high - low
-        dof_pos_limits[:, 0] = middle - 0.5 * r * 0.9
-        dof_pos_limits[:, 1] = middle + 0.5 * r * 0.9
-        return dof_pos_limits
+        soft_dof_pos_limits[:, 0] = middle - 0.5 * r * 0.9
+        soft_dof_pos_limits[:, 1] = middle + 0.5 * r * 0.9
+        return soft_dof_pos_limits
 
     def is_absorbing(self, obs):
         #fallen = self._check_collision("body", "groundplane", 0.)
@@ -204,11 +213,9 @@ class IsaacA1Description(IsaacSim):
     def setup(self, env_indices, obs):
         #new
         self.feet_air_time[env_indices] = 0.
-        self.last_actions[env_indices] = 0.
-        self.last_dof_vel[env_indices] = 0.
+        #self.last_actions[env_indices] = 0.
+        #self.last_dof_vel[env_indices] = 0.
         self.episode_length[env_indices] = 0
-
-        self._actions[env_indices] = 0
 
         dof_pos = self._default_joint_angles * self.torch_rand_float(0.5, 1.5, (len(env_indices), self.NUM_DOFS), device=self._device)
         dof_vel = torch.zeros((len(env_indices), len(self._action_spec)), device=self._device)
@@ -216,7 +223,15 @@ class IsaacA1Description(IsaacSim):
         self._write_data("joint_pos", dof_pos, env_indices)
         self._write_data("joint_vel", dof_vel, env_indices)
 
-        self._write_data("body_vel", self.torch_rand_float(-0.5, 0.5, (len(env_indices), 6), device=self._device), env_indices)
+        body_vel = self.torch_rand_float(-0.5, 0.5, (len(env_indices), 6), device=self._device)
+        self._write_data("body_vel", body_vel, env_indices)
+
+        self._setup_dof_pos = dof_pos
+        self._setup_dof_vel = dof_vel
+        self._setup_env_indices = env_indices
+
+        #update last_dof_vel
+        self.last_dof_vel[env_indices] = dof_vel
 
         self._resample_commands(env_indices)
 
@@ -242,6 +257,17 @@ class IsaacA1Description(IsaacSim):
         return obs
     
     def _create_observation(self, obs):
+        #update observation with values set in setup
+        if self._setup_env_indices is not None:
+            dof_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
+            obs[self._setup_env_indices.unsqueeze(1), dof_pos_indices] = self._setup_dof_pos
+
+            dof_vel_indices = self.observation_helper.obs_idx_map["joint_vel"]
+            obs[self._setup_env_indices.unsqueeze(1), dof_vel_indices] = self._setup_dof_vel
+
+            self._setup_env_indices = None
+
+        #set missing observations
         rot = self._read_data("body_rot")
         gravity_indices = self.observation_helper.obs_idx_map["projected_gravity"]
         obs[:, gravity_indices] = self.quat_rotate_inverse(rot, self._gravity)
@@ -252,7 +278,7 @@ class IsaacA1Description(IsaacSim):
         action_indices = self.observation_helper.obs_idx_map["actions"]
         obs[:, action_indices] = self._actions
 
-        lin_vel_indices = self.observation_helper.obs_idx_map["base_lin_vel"]
+        lin_vel_indices = self.observation_helper.obs_idx_map["base_lin_vel"] 
         lin_vel = self.observation_helper.get_from_obs(obs, "base_lin_vel")
         obs[:, lin_vel_indices] = self.quat_rotate_inverse(rot, lin_vel)
 
@@ -324,11 +350,11 @@ class IsaacA1Description(IsaacSim):
         r_dof_pos_limits = self._reward_dof_pos_limits(dof_pos) * -10.0 * self.dt
 
         self._extra_info_rewards = {
-            "r_tracking_lin_vel": r_tracking_lin_vel / self.dt, "r_tracking_ang_vel": r_tracking_ang_vel / self.dt, 
-            "r_lin_vel_z": r_lin_vel_z / self.dt, "r_ang_vel_xy": r_ang_vel_xy / self.dt, 
-            "r_torques": r_torques / self.dt, "r_dof_acc": r_dof_acc / self.dt, 
-            "r_feet_air_time": r_feet_air_time / self.dt, "r_collision": r_collision / self.dt, 
-            "r_action_rate": r_action_rate / self.dt, "r_dof_pos_limits": r_dof_pos_limits / self.dt
+            "tracking_lin_vel": r_tracking_lin_vel, "tracking_ang_vel": r_tracking_ang_vel,
+            "lin_vel_z": r_lin_vel_z, "ang_vel_xy": r_ang_vel_xy, 
+            "torques": r_torques, "dof_acc": r_dof_acc, 
+            "feet_air_time": r_feet_air_time, "collision": r_collision, 
+            "action_rate": r_action_rate, "dof_pos_limits": r_dof_pos_limits
         }
 
         reward = r_tracking_lin_vel + r_tracking_ang_vel + r_lin_vel_z + r_ang_vel_xy + r_torques + r_dof_acc + r_feet_air_time \
