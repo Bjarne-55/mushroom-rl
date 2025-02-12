@@ -50,15 +50,15 @@ class Network(nn.Module):
 def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
                alg_params, policy_params):
 
-    logger = Logger(alg.__name__ + "_1_legged_gym", results_dir="./logs/", log_console=True, use_timestamp=True)
+    logger = Logger(alg.__name__ + "_honey_batcher", results_dir="./logs/", log_console=True, use_timestamp=True)
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = HoneyBatcher(num_envs, 1000, True)
+    mdp = HoneyBatcher(num_envs, 1000, True, True)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
-                                    'params': {'lr': 1e-4}},
+                                    'params': {'lr': 3e-4}},
                          loss=F.mse_loss,
                          n_features=[512, 256, 128],
                          batch_size=int((4096*24) / 4),
@@ -74,13 +74,13 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     alg_params['critic_params'] = critic_params
 
     agent = alg(mdp.info, policy, **alg_params)
-    #agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1736818810.1377356.zip")
-    #agent.set_logger(logger)
+    #agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1739226183.3212636.zip")
+    agent.set_logger(logger)
 
     core = VectorCore(agent, mdp)
-
+    
     """
-    dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
+    dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
 
     J = torch.mean(dataset.discounted_return).item()
     R = torch.mean(dataset.undiscounted_return).item()
@@ -103,15 +103,15 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
 
     #logger.info('Press a button to visualize')
     #input()
-    core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
-    agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
+    #core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
+    #agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
 
 
 if __name__ == '__main__':
     TorchUtils.set_default_device('cuda:0')
     ppo_params = dict(
         actor_optimizer={'class': optim.Adam,
-        'params': {'lr': 1e-4}},#changed from 1e-3
+        'params': {'lr': 3e-4}},#changed from 1e-3
         n_epochs_policy=5,
         batch_size=int((4096*24) / 4),
         eps_ppo=.2,
@@ -124,5 +124,5 @@ if __name__ == '__main__':
         ent_coeff=0.01
     )
     num_envs = 4096
-    experiment(alg=PPO, num_envs=num_envs, n_epochs=40, n_steps=4096*24*50, n_steps_per_fit=4096*24,
+    experiment(alg=PPO, num_envs=num_envs, n_epochs=3, n_steps=4096*24*50*15, n_steps_per_fit=4096*24,
                    n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params)
