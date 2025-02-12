@@ -14,6 +14,7 @@ from mushroom_rl.algorithms.actor_critic import TRPO, PPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
 from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
+from mushroom_rl.environments.isaacsim_envs.isaac_a1_pos_action import A1Pos
 from mushroom_rl.utils import TorchUtils
 
 
@@ -24,27 +25,19 @@ class Network(nn.Module):
         n_input = input_shape[-1]
         n_output = output_shape[0]
 
-        self._h1 = nn.Linear(n_input, n_features[0])
-        self._h2 = nn.Linear(n_features[0], n_features[1])
-        self._h3 = nn.Linear(n_features[1], n_features[2])
-        self._h4 = nn.Linear(n_features[2], n_output)
-
-        nn.init.xavier_uniform_(self._h1.weight,
-                                gain=nn.init.calculate_gain('relu'))
-        nn.init.xavier_uniform_(self._h2.weight,
-                                gain=nn.init.calculate_gain('relu'))
-        nn.init.xavier_uniform_(self._h3.weight,
-                                gain=nn.init.calculate_gain('relu'))
-        nn.init.xavier_uniform_(self._h4.weight,
-                                gain=nn.init.calculate_gain('linear'))
+        self.actor = nn.Sequential(
+            nn.Linear(n_input, n_features[0]),
+            nn.ELU(alpha=1.),
+            nn.Linear(n_features[0], n_features[1]),
+            nn.ELU(alpha=1.),
+            nn.Linear(n_features[1], n_features[2]),
+            nn.ELU(alpha=1.),
+            nn.Linear(n_features[2], n_output)
+        )
 
     def forward(self, state, **kwargs):
-        features1 = F.relu(self._h1(torch.squeeze(state, 1).float()))
-        features2 = F.relu(self._h2(features1))
-        features3 = F.relu(self._h3(features2))
-        a = self._h4(features3)
-
-        return a
+        state = torch.squeeze(state, 1).float()
+        return self.actor(state)
 
 
 def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
@@ -54,7 +47,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = IsaacA1Description(num_envs, 1000, True)
+    mdp = A1Pos(num_envs, 1000, True, True)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
@@ -74,23 +67,10 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     alg_params['critic_params'] = critic_params
 
     agent = alg(mdp.info, policy, **alg_params)
-    #agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1734371118.3081386.zip")
-    #agent.set_logger(logger)
 
     core = VectorCore(agent, mdp)
 
-    profile = cProfile.Profile()
-    profile.enable()
     dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
-    profile.disable()
-    profile_file = "profile_without_camera.prof"
-    stats = pstats.Stats(profile)
-    stats.dump_stats(profile_file)
-    stats.sort_stats('cumtime').print_stats(25)
-    stats.sort_stats('time').print_stats(25)
-
-    """
-
     J = torch.mean(dataset.discounted_return).item()
     R = torch.mean(dataset.undiscounted_return).item()
     E = agent.policy.entropy().item()
@@ -99,23 +79,23 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
-        #dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
-        #agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
+        if it == 4:
+            dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
+        else:
+            dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
+        agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
 
-        #J = torch.mean(dataset.discounted_return).item()
-        #R = torch.mean(dataset.undiscounted_return).item()
-        #E = agent.policy.entropy().item()
+        J = torch.mean(dataset.discounted_return).item()
+        R = torch.mean(dataset.undiscounted_return).item()
+        E = agent.policy.entropy().item()
 
-        #logger.epoch_info(it+1, J=J, R=R, entropy=E)
+        logger.epoch_info(it+1, J=J, R=R, entropy=E)
 
     #logger.info('Press a button to visualize')
     #input()
-    #core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
-    #agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
-    """
+    core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
+    agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
 
-import cProfile
-import pstats
 if __name__ == '__main__':
     TorchUtils.set_default_device('cuda:0')
     ppo_params = dict(
@@ -134,18 +114,5 @@ if __name__ == '__main__':
     )
     num_envs = 4096
 
-    experiment(alg=PPO, num_envs=num_envs, n_epochs=10, n_steps=4096*24*10, n_steps_per_fit=4096*24,
+    experiment(alg=PPO, num_envs=num_envs, n_epochs=5, n_steps=4096*24*50*6, n_steps_per_fit=4096*24,
                    n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params)
-    """
-    profile = cProfile.Profile()
-    profile.enable()
-    experiment(alg=PPO, num_envs=num_envs, n_epochs=10, n_steps=4096*24*10, n_steps_per_fit=4096*24,
-                   n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params)
-    
-    profile.disable()
-    profile_file = "profile_output3.prof"
-    stats = pstats.Stats(profile)
-    stats.dump_stats(profile_file)
-    stats.sort_stats('cumtime').print_stats(50)
-    stats.sort_stats('time').print_stats(25)
-    """
