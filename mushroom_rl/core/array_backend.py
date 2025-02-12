@@ -502,7 +502,7 @@ class TorchBackend(ArrayBackend):
         if len(array) > 1 and isinstance(array[0], torch.Tensor):
             return torch.stack(array)
         else:
-            return torch.tensor(array)
+            return torch.tensor(array).to(TorchUtils.get_device())
 
     @staticmethod
     def pack_padded_sequence(array, mask):
