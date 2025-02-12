@@ -5,11 +5,11 @@ import numpy as np
 import torch
 import random
 from mushroom_rl.rl_utils.spaces import Box
-import os
+from pathlib import Path
 
 class IsaacA1Description(IsaacSim):
     def __init__(self, num_envs, horizon, headless, domain_randomization=True, camera_position=(105, 0, 4), camera_target=(95, 0, 0)):
-        usd_path = os.path.abspath("mushroom_rl/environments/isaacsim_envs/robots_usds/a1/a1.usd")
+        usd_path = str(Path(__file__).resolve().parent / "robots_usds/a1/a1.usd")
         self.NUM_DOFS = 12
 
         backend="torch"
