@@ -6,12 +6,11 @@ import numpy as np
 import torch
 import random
 from mushroom_rl.rl_utils.spaces import Box
-
-#from mushroom_rl.environments.isaacsim_envs.isaac_gym import IsaacGym
+import os
 
 class A1Pos(IsaacA1Description):
-    def __init__(self, num_envs, horizon, headless, domain_randomization=True, camera_position=(105, 0, 4), camera_target=(95, 0, 0),
-                 usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/a1/a1.usd"):
+    def __init__(self, num_envs, horizon, headless, domain_randomization=True, camera_position=(105, 0, 4), camera_target=(95, 0, 0)):
+        usd_path = os.path.abspath("mushroom_rl/environments/isaacsim_envs/robots_usds/a1/a1.usd")
         self.NUM_DOFS = 12
 
         backend="torch"
