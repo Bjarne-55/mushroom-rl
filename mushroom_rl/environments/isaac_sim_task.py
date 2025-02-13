@@ -84,6 +84,8 @@ class IsaacSimTask(BaseTask):
         self._initial_camera_pos = camera_position
         self._initial_camera_target = camera_target
 
+        self._consistent_property_storage = {}
+
         self.collision_helper = CollisionHelper(collision_groups, backend, num_envs, device, n_intermediate_steps)
 
         super().__init__("MushroomTask")
@@ -137,8 +139,8 @@ class IsaacSimTask(BaseTask):
             reset_xform_properties=False
         )
         scene.add(self.robots)
-        self.robots.set_solver_position_iteration_counts(torch.full((self._num_envs, ), 4))
-        self.robots.set_solver_velocity_iteration_counts(torch.full((self._num_envs, ), 4))
+        #self.robots.set_solver_position_iteration_counts(torch.full((self._num_envs, ), 4)) #leads to performance improvements could have side effects
+        #self.robots.set_solver_velocity_iteration_counts(torch.full((self._num_envs, ), 4))
 
         scene.add_ground_plane(size=math.ceil(self._num_envs**0.5) * self._env_spacing, static_friction=1., dynamic_friction=1., restitution=0.)
         
@@ -188,6 +190,10 @@ class IsaacSimTask(BaseTask):
 
         self._observers = self._create_observer_tuple(self._observation_spec)
         self._additionals = self._create_observer_tuple(self._additional_data_spec)
+
+        #reapplies specified written properties after world reset 
+        for key, reapply_data in self._consistent_property_storage.items():
+            reapply_data()
 
     def _create_observer_tuple(self, spec):
         mapping = {}
@@ -338,19 +344,24 @@ class IsaacSimTask(BaseTask):
         """
         return self.robots.get_joint_max_velocities(indices=[0], joint_indices=self._controlled_joints, clone=True)[0]
 
-    def write_data(self, name, value, env_indices=None):
+    def write_data(self, name, value, env_indices=None, reapply_after_reset=False):
         """
         Writes data to isaac sim.
 
         Args: 
             name (str): A name referring to an entry contained in additional_data_spec or observation_spec.
             value (torch.tensor, np.ndarra): The data that should be written.
+            reapply_after_reset (bool): Whether the written property should be reapplied after a world reset. 
+                Defaults to False.
         """
         if name in self._additionals:
             view, obs_type, element_idx = self._additionals[name]
         else:
             view, obs_type, element_idx = self._observers[name]
         self._set_property(view, obs_type, value, element_idx=element_idx, env_indices=env_indices)
+
+        if reapply_after_reset:
+            self._consistent_property_storage[name] = lambda: self._set_property(view, obs_type, value.clone(), element_idx=element_idx, env_indices=env_indices)
 
     def read_data(self, name, env_indices=None):
         """
@@ -504,6 +515,8 @@ class IsaacSimTask(BaseTask):
             return view.get_armatures(indices=env_indices, joint_indices=element_idx, clone=clone)
         elif obs_type == ObservationType.JOINT_FRICTION:
             return view.get_friction_coefficients(indices=env_indices, joint_indices=element_idx, clone=clone)
+        elif obs_type == ObservationType.JOINT_MEASURED_EFFORT:
+            return view.get_measured_joint_efforts(indices=env_indices, joint_indices=element_idx, clone=clone)
         elif obs_type == ObservationType.SUB_BODY_INERTIA:
             return view.get_body_inertias(indices=env_indices, body_indices=element_idx, clone=clone)
         elif obs_type == ObservationType.SUB_BODY_MASS:

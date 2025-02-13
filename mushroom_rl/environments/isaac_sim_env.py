@@ -440,15 +440,17 @@ class IsaacSim(VectorizedEnvironment):
         """
         return self._task.read_data(name, env_indices)
 
-    def _write_data(self, name, value, env_indices=None):
+    def _write_data(self, name, value, env_indices=None, reapply_after_reset=False):
         """
         Writes data to isaac sim.
 
         Args: 
             name (str): A name referring to an entry contained in additional_data_spec or observation_spec.
             value (torch.tensor, np.ndarra): The data that should be written.
+            reapply_after_reset (bool): Whether the written property should be reapplied after a world reset. 
+                Defaults to False.
         """
-        self._task.write_data(name, value, env_indices)
+        self._task.write_data(name, value, env_indices, reapply_after_reset)
 
     def _set_joint_data(self, value, type, joint_indices=None, env_indices=None):
         """

@@ -35,6 +35,7 @@ class ObservationType(Enum):
     JOINT_MAX_POS = ('joint', 2)
     JOINT_ARMATURES = ('joint', 1)
     JOINT_FRICTION = ('joint', 1)
+    JOINT_MEASURED_EFFORT = ('joint', 1)
     SUB_BODY_INERTIA = ('sub_body', 9)
     SUB_BODY_MASS = ('sub_body', 1)
     SUB_BODY_COM = ('sub_body', 7) # center of mass
