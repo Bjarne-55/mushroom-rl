@@ -35,13 +35,14 @@ class A1Pos(IsaacA1Description):
             ("base_ang_vel", "/base", ObservationType.BODY_ANG_VEL, None),
 
             ("joint_pos", "", ObservationType.JOINT_POS, self._action_spec),
-            ("joint_vel", "", ObservationType.JOINT_VEL, self._action_spec)
+            ("joint_vel", "", ObservationType.JOINT_VEL, self._action_spec),
         ]
         additional_data_spec = [
             ("body_rot", "/base", ObservationType.BODY_ROT, None), 
             ("body_vel", "/base", ObservationType.BODY_VEL, None),
             ("joint_damping", "", ObservationType.JOINT_GAIN_DAMPING, self._action_spec),
-            ("joint_stiffness", "", ObservationType.JOINT_GAIN_STIFFNESS, self._action_spec)
+            ("joint_stiffness", "", ObservationType.JOINT_GAIN_STIFFNESS, self._action_spec),
+            ("joint_measured_effort", "", ObservationType.JOINT_MEASURED_EFFORT, self._action_spec),
         ]
         collision_groups = [
             ("groundplane", ["/World/groundPlane/collisionPlane"]), 
@@ -110,14 +111,14 @@ class A1Pos(IsaacA1Description):
         self._obs = None
 
     def _set_stiffness_damping(self):
-        self._write_data("joint_damping", torch.full((self.number, self.NUM_DOFS), 0.5, device=self._device), torch.arange(0, self.number, 1, dtype=int, device=self._device))
-        self._write_data("joint_stiffness", torch.full((self.number, self.NUM_DOFS), 20.0, device=self._device), torch.arange(0, self.number, 1, dtype=int, device=self._device))
+        env_ids = torch.arange(0, self.number, 1, dtype=int, device=self._device)
+        self._write_data("joint_damping", torch.full((self.number, self.NUM_DOFS), 0.5, device=self._device), env_ids, reapply_after_reset=True)
+        self._write_data("joint_stiffness", torch.full((self.number, self.NUM_DOFS), 20.0, device=self._device), env_ids, reapply_after_reset=True)
     
     def _compute_action(self, obs, action):
-        #for torque reward
-        joint_vels = self.observation_helper.get_from_obs(obs, "joint_vel")
-        dof_positions = self.observation_helper.get_from_obs(obs, "joint_pos")
-        self._compute_torque(action, joint_vels, dof_positions)
-
         desired_position = action * 0.25 + self._default_joint_angles
         return desired_position
+    
+    def _step_finalize(self, env_indices):
+        self._torques = self._read_data("joint_measured_effort")
+        return super()._step_finalize(env_indices)
