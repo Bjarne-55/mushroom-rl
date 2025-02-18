@@ -1,3 +1,4 @@
+"""
 try:
     Atari = None
     from .atari import Atari
@@ -74,7 +75,7 @@ try:
     from .pybullet_envs import *
 except ImportError:
     pass
-
+"""
 try:
     IsaacSim = None
     from .isaac_sim_env import IsaacSim
