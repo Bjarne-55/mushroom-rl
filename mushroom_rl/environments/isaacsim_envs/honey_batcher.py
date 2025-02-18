@@ -122,7 +122,7 @@ class HoneyBatcher(IsaacSim):
         
         self._actions = torch.zeros((num_envs, self.NUM_DOFS), device=device)
 
-        self.time_since_last_touchdown = torch.zeros((num_envs, 4), device=device)
+        self.feet_air_time = torch.zeros((num_envs, 4), device=device)
         self.last_actions =  torch.zeros((num_envs, self.NUM_DOFS), device=device)
         self.last_dof_vel = torch.zeros((num_envs, self.NUM_DOFS), device=device)
         self.last_contacts = torch.zeros((num_envs, 4), device=device, dtype=torch.bool)
@@ -137,6 +137,9 @@ class HoneyBatcher(IsaacSim):
         self.np_rng = np.random.default_rng()
         self.current_mixed = False
         self.current_nr_delay_steps = 0
+
+        self._counter_curriculum = 0
+        self._evaluate = False
     
     def _import_helper_functions(self):
         from omni.isaac.core.utils.torch.rotations import quat_apply, quat_rotate_inverse, get_euler_xyz
@@ -239,6 +242,7 @@ class HoneyBatcher(IsaacSim):
             d_gain_ids = self.observation_helper.obs_idx_map["d_gain"]
             action_scaling_factor_ids = self.observation_helper.obs_idx_map["action_scaling_factor"]
             mass_ids = self.observation_helper.obs_idx_map["mass"]
+            foot_scaling_ids = self.observation_helper.obs_idx_map["foot_size"]
 
             v[torque_limit_ids] = -1
             v[joint_max_velocity_ids] = -1
@@ -250,6 +254,7 @@ class HoneyBatcher(IsaacSim):
             v[d_gain_ids] = -1
             v[action_scaling_factor_ids] = -1
             v[mass_ids] = -1
+            v[foot_scaling_ids] = -1
 
         return v
 
@@ -260,7 +265,7 @@ class HoneyBatcher(IsaacSim):
         return fallen
 
     def setup(self, env_indices, obs):
-        self.time_since_last_touchdown[env_indices, :] = 0.
+        self.feet_air_time[env_indices, :] = 0.
         self.last_actions[env_indices] = 0.
         self.last_dof_vel[env_indices] = 0.
         self.episode_length[env_indices] = 0
@@ -285,10 +290,15 @@ class HoneyBatcher(IsaacSim):
         self._resample_commands(env_indices)
 
         zero = torch.zeros(self._n_envs, device=self._device)
+        """
         self._extra_info_rewards = self._extra_info_rewards = {
             "r_tracking_lin_vel": zero, "r_tracking_ang_vel": zero, "r_lin_vel_z": zero,
             "r_ang_vel_xy": zero, "r_torques": zero, "r_dof_acc": zero, "r_feet_air_time": zero,
             "r_collision": zero, "r_action_rate": zero, "r_dof_pos_limits": zero
+        }
+        """
+        self._extra_info_rewards = {
+            "tracking_reward": zero, "penalties": zero, "curriculum_coeff": zero
         }
 
         self.action_history = torch.zeros((self.MAX_NR_DELAY_STEPS + 1, self.number, self.NUM_DOFS), device=self._device)
@@ -308,6 +318,12 @@ class HoneyBatcher(IsaacSim):
         return angles
     
     def _step_finalize(self, env_indices):
+        if torch.sum(env_indices).item() == self.number:
+            self._counter_curriculum += self.number
+            self._evaluate = False
+        else:
+            self._evaluate = True
+
         self.episode_length += 1
         self.step_counter += 1
 
@@ -467,6 +483,7 @@ class HoneyBatcher(IsaacSim):
         self._seen_torque_limit = self._read_data("torque_limit")
         self._seen_joint_nominal_pos = self._default_joint_angles.repeat((self.number, 1))
         self._seen_joint_max_vel = self._default_joint_max_vel.repeat((self.number, 1))
+        self._seen_foot_scaling = torch.ones((self.number, 4), device=self._device)
 
         self._seen_p_gain = torch.full((self.number, self.NUM_DOFS), 20., device=self._device)
         self._seen_d_gain = torch.full((self.number, self.NUM_DOFS), 0.5, device=self._device)
@@ -554,9 +571,9 @@ class HoneyBatcher(IsaacSim):
         trunk_mass = self._default_trunk_mass \
             + torch_rand_float(add_trunk_mass_min, add_trunk_mass_max, (n_envs, 1), self._device)
         actual_trunk_mass = trunk_mass * self._nf_trunk_mass[env_indices]
-        self._write_data("trunk_mass", actual_trunk_mass, env_indices)
+        self._write_data("trunk_mass", actual_trunk_mass, env_indices, True)
         actual_trunk_inertia = self._default_trunk_inertia + (actual_trunk_mass / self._default_trunk_mass)
-        self._write_data("trunk_inertia", actual_trunk_inertia.unsqueeze(1), env_indices)
+        self._write_data("trunk_inertia", actual_trunk_inertia.unsqueeze(1), env_indices, True)
         self._seen_mass[env_indices, 0] = trunk_mass.squeeze(1)
         self._seen_summed_mass = torch.sum(self._seen_mass, dim=1)
 
@@ -564,13 +581,13 @@ class HoneyBatcher(IsaacSim):
         actual_trunk_com = self._default_trunk_com \
             + torch_rand_float(add_com_displacement_min, add_com_displacement_max, (n_envs, 1), self._device)
         actual_trunk_com *= self._nf_trunk_com[env_indices]
-        self._write_data("trunk_com", actual_trunk_com.unsqueeze(1), env_indices)
+        self._write_data("trunk_com", actual_trunk_com.unsqueeze(1), env_indices, True)
 
         #foot scaling
-        actual_foot_scaling = torch_rand_float(foot_scaling_min, foot_scaling_max, (n_envs, 4), self._device) \
-            * self._nf_foot_size[env_indices]
+        self._seen_foot_scaling  = torch_rand_float(foot_scaling_min, foot_scaling_max, (n_envs, 4), self._device)
+        actual_foot_scaling = self._seen_foot_scaling * self._nf_foot_size[env_indices]
         for i, name in enumerate(["FL_foot_scale", "FR_foot_scale", "RL_foot_scale", "RR_foot_scale"]):
-            self._write_data(name, actual_foot_scaling[env_indices, i].unsqueeze(1).repeat(1, 3), env_indices)
+            self._write_data(name, actual_foot_scaling[env_indices, i].unsqueeze(1).repeat(1, 3), env_indices, True)
         
         #joint nominal position
         self._seen_joint_nominal_pos[env_indices] = self._default_joint_nominal_pos \
@@ -580,12 +597,12 @@ class HoneyBatcher(IsaacSim):
         #joint torque limit
         self._seen_torque_limit[env_indices] = self._default_torque_limit \
             * (1 + torch_rand_float(-torque_limit_factor, torque_limit_factor, (n_envs, self.NUM_DOFS), self._device))
-        self._write_data("torque_limit", self._seen_torque_limit[env_indices], env_indices)
+        self._write_data("torque_limit", self._seen_torque_limit[env_indices], env_indices, True)
 
         #joint max velocity
         self._seen_joint_max_vel[env_indices] = self._default_joint_max_vel \
             * (1 + torch_rand_float(-joint_velocity_factor, joint_velocity_factor, (n_envs, self.NUM_DOFS), self._device))
-        self._write_data("max_joint_vel", self._seen_joint_max_vel[env_indices], env_indices)
+        self._write_data("max_joint_vel", self._seen_joint_max_vel[env_indices], env_indices, True)
 
         #joint range
         #TODO can't do that
@@ -606,10 +623,10 @@ class HoneyBatcher(IsaacSim):
         self._seen_joint_armature[not_stay_at_default_idx] = torch_rand_float(joint_armature_min, joint_armature_max, (num_envs_not_default, self.NUM_DOFS), self._device)
         self._seen_joint_frictionloss[not_stay_at_default_idx] = torch_rand_float(joint_friction_loss_min, joint_friction_loss_max, (num_envs_not_default, self.NUM_DOFS), self._device)
 
-        self._write_data("joint_damping", self._seen_joint_damping[env_indices] * self._nf_joint_damping[env_indices], env_indices) #chceck if damping is difference in scale
-        self._write_data("joint_stiffness", self._seen_joint_stiffness[env_indices] * self._nf_joint_stiffness[env_indices], env_indices)
-        self._write_data("joint_armature", self._seen_joint_armature[env_indices] * self._nf_joint_armature[env_indices], env_indices)
-        self._write_data("joint_frictionloss", self._seen_joint_frictionloss[env_indices] * self._nf_joint_friction[env_indices], env_indices)
+        self._write_data("joint_damping", self._seen_joint_damping[env_indices] * self._nf_joint_damping[env_indices], env_indices, True) #chceck if damping is difference in scale
+        self._write_data("joint_stiffness", self._seen_joint_stiffness[env_indices] * self._nf_joint_stiffness[env_indices], env_indices, True)
+        self._write_data("joint_armature", self._seen_joint_armature[env_indices] * self._nf_joint_armature[env_indices], env_indices, True)
+        self._write_data("joint_frictionloss", self._seen_joint_frictionloss[env_indices] * self._nf_joint_friction[env_indices], env_indices, True)
         """
 
         #used for control function
@@ -710,14 +727,12 @@ class HoneyBatcher(IsaacSim):
 
         #TODO robot_dimensions, relative_joint_axis, relative_joint_pos_normalized, relative_foot_normalized and mutliple addes multiple times
 
-        """
         self.observation_helper.add_obs(
-            name="",
-            length=,
-            min_value=,
-            max_value=
+            name="foot_size",
+            length=4,
+            min_value=foot_scaling_min - 1.,
+            max_value=foot_scaling_max - 1.
         )
-        """
 
     def _add_seen_parameters(self, obs):
         joint_nominal_pos_ids = self.observation_helper.obs_idx_map["joint_nominal_position"]
@@ -753,9 +768,15 @@ class HoneyBatcher(IsaacSim):
         mass_ids = self.observation_helper.obs_idx_map["mass"]
         obs[:, mass_ids] = self._seen_summed_mass.unsqueeze(1)
 
+        foot_scale_ids = self.observation_helper.obs_idx_map["foot_size"]
+        obs[:, foot_scale_ids] = self._seen_foot_scaling
+
         return obs
 
     #rewards --------------------------------------------------------------------
+
+    def _create_info_dictionary(self, obs):
+        return self._extra_info_rewards
 
     def reward(self, obs, action, next_obs, absorbing):
         local_root_lin_vel = self.observation_helper.get_from_obs(next_obs, "base_lin_vel")
@@ -779,6 +800,10 @@ class HoneyBatcher(IsaacSim):
         dof_pos = self.observation_helper.get_from_obs(next_obs, "joint_pos")
 
         #--------------------------------------------------------------------------------
+        curriculum_coeff = 1. #min(self._counter_curriculum / 50e6, 1.0)
+        if self._evaluate:
+            curriculum_coeff = 1.0
+
         #curriculum_coeff is missing
         r_tracking_lin_vel = self._reward_tracking_lin_vel(local_root_lin_vel_xy) * 2. * self.dt
         r_tracking_yaw_vel = self._reward_tracking_ang_vel(local_root_ang_vel_z) * 1. * self.dt
@@ -791,18 +816,27 @@ class HoneyBatcher(IsaacSim):
         r_action_rate = self._reward_action_rate(action) * -1e-2 * self.dt
         r_collision = (self._reward_collision() + absorbing) * -1 * self.dt
         r_height = self._reward_height(base_pos_z) * -3e1 * self.dt
-        r_feet_air_time = self._reward_feet_air_time() * 1e-1 * self.dt
+        r_feet_air_time = self._reward_feet_air_time() * 1. * self.dt
         r_symmetry = self._reward_symmetry() * -0.5 * self.dt
 
+        penalties = r_lin_vel + r_ang_vel + r_ang_pos + r_dof_pos_limits + r_dof_acc + r_torque + r_action_rate \
+            + r_collision + r_height + r_feet_air_time + r_symmetry
+        tracking_reward = r_tracking_lin_vel + r_tracking_yaw_vel
+
+        """
         self._extra_info_rewards = {
             "r_tracking_lin_vel": r_tracking_lin_vel, "r_tracking_yaw_vel": r_tracking_yaw_vel, "r_lin_vel_z": r_lin_vel,
             "r_ang_vel_xy": r_ang_vel, "r_torque": r_torque, "r_dof_acc": r_dof_acc, "r_feet_air_time": r_feet_air_time,
             "r_collision": r_collision, "r_action_rate": r_action_rate, "r_dof_pos_limits": r_dof_pos_limits, "r_ang_pos": r_ang_pos,
-            "r_height": r_height, "r_symmetry": r_symmetry
+            "r_height": r_height, "r_symmetry": r_symmetry, "tracking_reward": tracking_reward, "penalties": penalties,
+            "curriculum_coeff": curriculum_coeff
+        }
+        """
+        self._extra_info_rewards = {
+            "tracking_reward": tracking_reward, "penalties": penalties, "curriculum_coeff": torch.full((self.number, ), curriculum_coeff, device=self._device)
         }
 
-        reward = r_tracking_lin_vel + r_tracking_yaw_vel + r_lin_vel + r_ang_vel + r_ang_pos + r_dof_pos_limits \
-                + r_dof_acc + r_torque + r_action_rate + r_collision + r_height + r_feet_air_time + r_symmetry
+        reward = tracking_reward + (penalties * curriculum_coeff)
 
         reward = torch.clamp(reward, min=0.)
 
@@ -828,14 +862,15 @@ class HoneyBatcher(IsaacSim):
         return torch.sum(torch.square((self.last_dof_vel - dof_vel) / self.dt), dim=1)
     
     def _reward_action_rate(self, actions):
-        # Penalize changes in actions
+        # Penalize changes in actions-
         return torch.sum(torch.square(self.last_actions - actions), dim=1)
     
     def _reward_ang_pos_xy(self, ang_pos_xy):
         return torch.sum(torch.square(ang_pos_xy), dim=1)
     
     def _reward_height(self, base_z):
-        nominal_base_z = 0.316
+        #nominal_base_z = 0.316
+        nominal_base_z = 0.25
         return torch.square(base_z - nominal_base_z)
     
     def _reward_dof_pos_limits(self, dof_pos):
@@ -854,28 +889,65 @@ class HoneyBatcher(IsaacSim):
         ang_vel_error = torch.square(self.commands[:, 2] - ang_vel_z)
         return torch.exp(-ang_vel_error/0.25)
     
+
+    """
+    def _reward_feet_air_time(self):#TODO maybe change back
+        contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
+        for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
+            contact[:, i] = self._check_collision(foot, "groundplane")
+
+        lift_off = torch.logical_and(torch.logical_not(self.last_contacts[0]), torch.logical_not(self.last_contacts[1]))
+        contact_filt = torch.logical_and(contact, lift_off)
+        self.last_contacts = torch.roll(self.last_contacts, -1, dims=0)
+        self.last_contacts[-1] = contact
+    
+        rew_airTime = torch.sum((self.time_since_last_touchdown - 0.5) * contact_filt, dim=1)
+        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
+        
+        self.time_since_last_touchdown += self.dt
+        self.time_since_last_touchdown *= ~contact_filt
+
+        return rew_airTime
+    """
+    
+    """
     def _reward_feet_air_time(self):#TODO maybe change back
         contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
         for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
             contact[:, i] = self._check_collision(foot, "groundplane")
     
-        rew_airTime = torch.sum((self.time_since_last_touchdown - 0.5) * contact, dim=1)
+        rew_airTime = torch.sum((self.feet_air_time - 0.5) * contact, dim=1)
         rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
         
-        self.time_since_last_touchdown += self.dt
-        self.time_since_last_touchdown *= ~contact
+        self.feet_air_time += self.dt
+        self.feet_air_time *= ~contact
 
+        return rew_airTime
+    """
+
+    def _reward_feet_air_time(self):
+        # Reward long steps
+        contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
+        for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
+            #contact[:, i] = self._check_collision(foot, "groundplane", 1., lambda x: torch.max(torch.max(x[:, :, :, 2], dim=2).values, dim=0).values, dt=self._timestep) #check if this is actually correct
+            contact[:, i] = self._get_net_collision_forces(foot, dt=self._timestep)[:, 0, 2] > 1. #1/4 mass of robot * 9.81
+        contact_filt = torch.logical_or(contact, self.last_contacts) #contact
+        self.last_contacts = contact
+        first_contact = (self.feet_air_time > 0.) * contact_filt
+        self.feet_air_time += self.dt
+        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) # reward only on first contact with the ground
+        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
+        self.feet_air_time *= ~contact_filt
         return rew_airTime
     
     def _reward_symmetry(self):
         contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
         for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
-            contact[:, i] = self._check_collision(foot, "groundplane")
-        symmetry_violations = torch.logical_and(torch.logical_not(contact[:, 0]), torch.logical_not(contact[:, 1])) + \
-                                torch.logical_and(torch.logical_not(contact[:, 2]), torch.logical_not(contact[:, 3]))
+            contact[:, i] = self._get_net_collision_forces(foot, dt=self._timestep)[:, 0, 2] > 1. #self._check_collision(foot, "groundplane")
+        symmetry_violations = 1 * torch.logical_and(torch.logical_not(contact[:, 0]), torch.logical_not(contact[:, 1])) \
+                            + 1 * torch.logical_and(torch.logical_not(contact[:, 2]), torch.logical_not(contact[:, 3]))
         return symmetry_violations
     
     def _reward_collision(self):
         # Penalize collisions on selected bodies
         return self._get_collision_count("lower_body", "groundplane")
-
