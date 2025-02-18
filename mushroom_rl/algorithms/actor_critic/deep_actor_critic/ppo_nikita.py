@@ -23,6 +23,14 @@ class NikitaPPO(PPO):
         self._actor_learning_rate = actor_optimizer['params']['lr']
         self._critic_learning_rate = critic_params['optimizer']['params']['lr']
 
+        self._add_save_attr(
+            _clip_grad_norm='primitive',
+            _schedule='primitive',
+            _desired_kl='primitive',
+            _actor_learning_rate='primitive',
+            _critic_learning_rate='primitive',
+        )
+
     def fit(self, dataset):
         state, action, reward, next_state, absorbing, last = dataset.parse(to='torch')
         state, next_state, state_old = self._preprocess_state(state, next_state)
