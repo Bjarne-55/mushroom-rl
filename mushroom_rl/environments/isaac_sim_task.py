@@ -139,8 +139,8 @@ class IsaacSimTask(BaseTask):
             reset_xform_properties=False
         )
         scene.add(self.robots)
-        #self.robots.set_solver_position_iteration_counts(torch.full((self._num_envs, ), 4)) #leads to performance improvements could have side effects
-        #self.robots.set_solver_velocity_iteration_counts(torch.full((self._num_envs, ), 4))
+        self.robots.set_solver_position_iteration_counts(torch.full((self._num_envs, ), 4)) #leads to performance improvements could have side effects
+        self.robots.set_solver_velocity_iteration_counts(torch.full((self._num_envs, ), 4))
 
         scene.add_ground_plane(size=math.ceil(self._num_envs**0.5) * self._env_spacing, static_friction=1., dynamic_friction=1., restitution=0.)
         
@@ -404,8 +404,10 @@ class IsaacSimTask(BaseTask):
             env_indices (torch.tensor, np.ndarray, list[int]): The indices of the environments to teleport.
         """
         pos = self.env_pos[env_indices]
-        pos[:, 2] = -10
+        pos[:, 2] = -5
         self.robots.set_world_poses(positions=pos, indices=env_indices)
+        vels = self._arr_backend.zeros(env_indices.shape[0], 6, device=self._device)
+        self.robots.set_velocities(vels, indices=env_indices)
 
     def _set_property(self, view, obs_type, value, element_idx=None, env_indices=None):#TODO missing max_pos_joint
         """
