@@ -24,7 +24,6 @@ class CollisionHelper:
         self._device = device
         self._num_envs = num_envs
         self.collision_groups = {key: group for key, group in collision_groups} if collision_groups is not None else {}
-        self._first_set_up = True
         self._n_intermediate_steps = n_intermediate_steps
 
     def prepare_env(self, stage):
@@ -80,12 +79,10 @@ class CollisionHelper:
     
     def post_reset(self):
         """
-        Called after world.reset() is completed. Initializes RigidContactViews after first world.reset()
+        Called after world.reset() is completed.
         """
-        if self._first_set_up:
-            for path in self._views:
-                self._views[path].initialize()
-            self._first_set_up = False
+        for path in self._views:
+            self._views[path].initialize()
 
         self.index = 0
 

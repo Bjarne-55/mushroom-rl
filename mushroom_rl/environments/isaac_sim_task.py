@@ -140,7 +140,7 @@ class IsaacSimTask(BaseTask):
         )
         scene.add(self.robots)
         self.robots.set_solver_position_iteration_counts(torch.full((self._num_envs, ), 4)) #leads to performance improvements could have side effects
-        self.robots.set_solver_velocity_iteration_counts(torch.full((self._num_envs, ), 4))
+        self.robots.set_solver_velocity_iteration_counts(torch.full((self._num_envs, ), 0))
 
         scene.add_ground_plane(size=math.ceil(self._num_envs**0.5) * self._env_spacing, static_friction=1., dynamic_friction=1., restitution=0.)
         
@@ -377,7 +377,7 @@ class IsaacSimTask(BaseTask):
             view, obs_type, element_idx = self._additionals[name]
         else:
             view, obs_type, element_idx = self._observers[name]
-        return self._read_property(view, obs_type, element_idx=element_idx, env_indices=env_indices, clone=True)
+        return self._read_property(view, obs_type, element_idx=element_idx, env_indices=env_indices, clone=False)
     
     def set_joint_data(self, value, type, element_idx=None, env_indices=None):
         """
@@ -408,6 +408,20 @@ class IsaacSimTask(BaseTask):
         self.robots.set_world_poses(positions=pos, indices=env_indices)
         vels = self._arr_backend.zeros(env_indices.shape[0], 6, device=self._device)
         self.robots.set_velocities(vels, indices=env_indices)
+
+    def clear_consistent_properties(self, names=None):
+        """
+        Removes properties from the consistent property storage.
+
+        Args:
+            names (list[str], None): List of property names to remove.
+                If None, removes all keys from the consistent property storage.
+        """
+        if names is None:
+            self._consistent_property_storage.clear()
+        else:
+            for name in names:
+                self._consistent_property_storage.pop(name, None)
 
     def _set_property(self, view, obs_type, value, element_idx=None, env_indices=None):#TODO missing max_pos_joint
         """

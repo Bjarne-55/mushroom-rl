@@ -232,11 +232,11 @@ class IsaacSim(VectorizedEnvironment):
             self._simulation_post_step()
 
             if self._recompute_action_per_step:
-                cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
+                cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
                 cur_obs = self._create_observation(cur_obs)
 
         if not self._recompute_action_per_step:
-            cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
+            cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
             cur_obs = self._create_observation(cur_obs)
 
         self._step_finalize(env_indices)
@@ -333,14 +333,25 @@ class IsaacSim(VectorizedEnvironment):
         from omni.isaac.core.utils.torch.maths import set_seed
         return set_seed(seed)
     
-    def stop(self):
+    def stop(self, soft=True):
         """
-        Resets simulation and closes viewer.
+        Resets simulation and closes viewer. 
+
+        If `soft` is False, the function additionally clears consistent properties from the task 
+        before resetting the simulation.
+
+        Args:
+            soft (bool): Defaults to True.
+                - True: Performs soft reset of world.
+                - False: Perform reset of world and clears consistent properties.
         """
         if self._viewer is not None:
             self._viewer.close()
             self._viewer = None
-        self._world.reset(soft=True)
+        
+        if not soft:
+            self._task.clear_consistent_properties()
+        self._world.reset(soft=soft)
 
     def __del__(self):
         """
