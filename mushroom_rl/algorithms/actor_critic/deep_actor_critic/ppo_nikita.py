@@ -56,12 +56,12 @@ class NikitaPPO(PPO):
 
     def _update_policy(self, obs, act, adv, old_log_p, state, old_pol_dist):
         for epoch in range(self._n_epochs_policy()):
+            with torch.no_grad():
+                new_pol_dist = self.policy.distribution_t(state)
+            kl = torch.mean(torch.distributions.kl.kl_divergence(old_pol_dist, new_pol_dist))
+            self._adapt_learning_rate(kl)
             for obs_i, act_i, adv_i, old_log_p_i in minibatch_generator(
                     self._batch_size(), obs, act, adv, old_log_p):
-                with torch.no_grad():
-                    new_pol_dist = self.policy.distribution_t(state)
-                kl = torch.mean(torch.distributions.kl.kl_divergence(old_pol_dist, new_pol_dist))
-                self._adapt_learning_rate(kl)
                 self._optimizer.zero_grad()
                 prob_ratio = torch.exp(self.policy.log_prob_t(obs_i, act_i) - old_log_p_i)
                 clipped_ratio = torch.clamp(prob_ratio, 1 - self._eps_ppo(), 1 + self._eps_ppo.get_value())
