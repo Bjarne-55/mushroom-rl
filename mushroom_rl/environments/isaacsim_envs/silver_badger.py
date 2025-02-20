@@ -1,5 +1,5 @@
 from mushroom_rl.environments import IsaacSim
-from mushroom_rl.environments.isaacsim_envs.honey_batcher import HoneyBatcher
+from mushroom_rl.environments.isaacsim_envs.honey_badger import HoneyBadger
 from mushroom_rl.utils.isaac_sim import ActionType, ObservationType
 from mushroom_rl.rl_utils.spaces import Box
 
@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 
-class Silver_Batcher(HoneyBatcher):
+class SilverBadger(HoneyBadger):
 
     def __init__(self, num_envs, horizon, headless):
         self.NUM_DOFS = 13
