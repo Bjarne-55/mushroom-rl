@@ -16,7 +16,8 @@ class IsaacSim(VectorizedEnvironment):
     def __init__(self, usd_path, actuation_spec, observation_spec, backend, device, collision_between_envs, 
                  num_envs, env_spacing, gamma, horizon, timestep=None, n_substeps=1, n_intermediate_steps=1, 
                  additional_data_spec=None, collision_groups=None, action_type=ActionType.EFFORT, headless=True,
-                 physics_material_spec=None, sim_params=None, camera_position=(5, 0, 4), camera_target=(0, 0, 0)):
+                 physics_material_spec=None, sim_params=None, camera_position=(5, 0, 4), camera_target=(0, 0, 0),
+                 solver_pos_it_count=None, solver_vel_it_count=None, ground_plane_friction=None):
         """
         Constructor.
 
@@ -59,6 +60,12 @@ class IsaacSim(VectorizedEnvironment):
                 gpu_temp_buffer_capacity, gpu_total_aggregate_pairs_capacity.
             camera_position (tuple): The position where the camera is placed.
             camera_target (tuple): The position the camera is aimed at.
+            solver_pos_it_count (torch, array): An array with the same size as num_envs. Determines how accurately contacts, 
+                drives, and limits are resolved. Low values can lead to performance improvement
+            solver_vel_it_count (torch, array): An array with the same size as num_envs. Determines how accurately contacts, 
+                drives, and limits are resolved. Low values can lead to performance improvement
+            ground_plane_friction (tuple, None): A tuple containing the static friciton, dynamic friction and restitution 
+                for the groundplane. The tuple should have the following format: (static_friction, dynamic_friction, restitution)
         """
         
         self._headless = headless
@@ -88,7 +95,10 @@ class IsaacSim(VectorizedEnvironment):
             collision_groups,
             physics_material_spec, 
             camera_position,
-            camera_target
+            camera_target,
+            solver_pos_it_count,
+            solver_vel_it_count,
+            ground_plane_friction
         )
         self._world.reset()
 
@@ -164,14 +174,16 @@ class IsaacSim(VectorizedEnvironment):
         print(f"uses Fabric: {self._physics_context.use_fabric}, uses gpu_pipeline: {self._physics_context.use_gpu_pipeline}, use_gpu_sim: {self._physics_context.use_gpu_sim}")
 
     def _set_task(self, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, actuation_spec, 
-                  additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target):
+                  additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target,
+                  solver_pos_it_count, solver_vel_it_count, ground_plane_friction):
         """Set up the simulation task."""
         from mushroom_rl.environments.isaac_sim_task import IsaacSimTask
 
         self._task = IsaacSimTask(
             self._physics_context, usd_path, num_envs, env_spacing, observation_spec, actuation_spec, 
             self._backend, self._device, self._action_type, self._n_intermediate_steps, collision_between_envs, 
-            additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target
+            additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target,
+            solver_pos_it_count, solver_vel_it_count, ground_plane_friction
         )
         self._world.add_task(self._task)
 

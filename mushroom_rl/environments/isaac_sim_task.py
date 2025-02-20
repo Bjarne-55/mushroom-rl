@@ -35,7 +35,8 @@ class IsaacSimTask(BaseTask):
     def __init__(self, physic_context, usd_path, num_envs, env_spacing, observation_spec, actuation_spec, backend, 
                  device, action_type=ActionType.EFFORT, n_intermediate_steps=1, collision_between_envs=False, 
                  additional_data_spec=None, collision_groups=None, physics_material_spec=None, 
-                 camera_position=(5, 0, 4), camera_target=(0, 0, 0)):
+                 camera_position=(5, 0, 4), camera_target=(0, 0, 0), solver_pos_it_count=None, solver_vel_it_count=None,
+                 ground_plane_friction=None):
         """
         Constructor.
 
@@ -65,9 +66,15 @@ class IsaacSimTask(BaseTask):
                 prim_paths is a list of paths to the prims.
             physics_material_spec (list, None): A list containing all data to create a custom physics material for each environment, which 
                 will be applied to all rigidbodies. 
-                The entries are given as the following tuples: (name, dynamic_friction, static_friction, restitution)
+                The entries are given as the following tuples: (name, static_friction, dynamic_friction, restitution)
             camera_position (tuple): The position where the camera is placed.
             camera_target (tuple): The position the camera is aimed at.
+            solver_pos_it_count (torch, array): An array with the same size as num_envs. Determines how accurately contacts, 
+                drives, and limits are resolved. Low values can lead to performance improvement
+            solver_vel_it_count (torch, array): An array with the same size as num_envs. Determines how accurately contacts, 
+                drives, and limits are resolved. Low values can lead to performance improvement
+            ground_plane_friction (tuple, None): A tuple containing the static friciton, dynamic friction and restitution 
+                for the groundplane. The tuple should have the following format: (static_friction, dynamic_friction, restitution)
         """
         self.usd_path = usd_path
         self._physic_context = physic_context
@@ -83,6 +90,9 @@ class IsaacSimTask(BaseTask):
         self._physics_material_spec = physics_material_spec
         self._initial_camera_pos = camera_position
         self._initial_camera_target = camera_target
+        self._solver_pos_it_count = solver_pos_it_count
+        self._solver_vel_it_count = solver_vel_it_count
+        self._ground_plane_friction = ground_plane_friction
 
         self._consistent_property_storage = {}
 
@@ -139,10 +149,24 @@ class IsaacSimTask(BaseTask):
             reset_xform_properties=False
         )
         scene.add(self.robots)
-        self.robots.set_solver_position_iteration_counts(torch.full((self._num_envs, ), 4)) #leads to performance improvements could have side effects
-        self.robots.set_solver_velocity_iteration_counts(torch.full((self._num_envs, ), 0))
 
-        scene.add_ground_plane(size=math.ceil(self._num_envs**0.5) * self._env_spacing, static_friction=1., dynamic_friction=1., restitution=0.)
+        #low iteration counts lead to performance improvements, can have sideffects
+        if self._solver_pos_it_count is not None:
+            self.robots.set_solver_position_iteration_counts(self._solver_pos_it_count) 
+        if self._solver_vel_it_count is not None:
+            self.robots.set_solver_velocity_iteration_counts(self._solver_vel_it_count)
+
+        ground_plane_size=math.ceil(self._num_envs**0.5) * self._env_spacing + 100.
+        if self._ground_plane_friction is None:
+            scene.add_ground_plane(size=ground_plane_size)
+        else:
+            static_friction, dynamic_friction, restitution = self._ground_plane_friction
+            scene.add_ground_plane(
+                size=ground_plane_size, 
+                static_friction=static_friction, 
+                dynamic_friction=dynamic_friction, 
+                restitution=restitution
+            )
         
         self._views[""] = self.robots
 
@@ -444,14 +468,14 @@ class IsaacSimTask(BaseTask):
             view.set_linear_velocities(value, indices=env_indices)
         elif obs_type == ObservationType.BODY_ANG_VEL:
             view.set_angular_velocities(value, indices=env_indices)
-        elif obs_type == ObservationType.JOINT_POS:
-            view.set_joint_positions(value, indices=env_indices, joint_indices=element_idx)
-        elif obs_type == ObservationType.JOINT_VEL:
-            view.set_joint_velocities(value, indices=env_indices, joint_indices=element_idx)
         elif obs_type == ObservationType.BODY_VEL:
             view.set_velocities(value, indices=env_indices)
         elif obs_type == ObservationType.BODY_SCALE:
             view.set_local_scales(value, indices=env_indices)
+        elif obs_type == ObservationType.JOINT_POS:
+            view.set_joint_positions(value, indices=env_indices, joint_indices=element_idx)
+        elif obs_type == ObservationType.JOINT_VEL:
+            view.set_joint_velocities(value, indices=env_indices, joint_indices=element_idx)
         elif obs_type == ObservationType.JOINT_GAIN:
             #kps is stiffness, kds is damping
             view.set_gains(kps=value[:, :, 0], kds=value[:, :, 1], indices=env_indices, joint_indices=element_idx)
@@ -465,10 +489,15 @@ class IsaacSimTask(BaseTask):
             view.set_max_efforts(value, indices=env_indices, joint_indices=element_idx)
         elif obs_type == ObservationType.JOINT_MAX_VELOCITY:
             view.set_max_joint_velocities(value, indices=env_indices, joint_indices=element_idx)
+        elif obs_type == ObservationType.JOINT_MAX_POS:
+            #can probably be implemented using usd
+            raise NotImplementedError("Set function for joint max position doesn't exist in isaacsim.core.")
         elif obs_type == ObservationType.JOINT_ARMATURES:
             view.set_armatures(value, indices=env_indices, joint_indices=element_idx)
         elif obs_type == ObservationType.JOINT_FRICTION:
             view.set_friction_coefficients(value, indices=env_indices, joint_indices=element_idx)
+        elif obs_type == ObservationType.JOINT_MEASURED_EFFORT:
+            raise NotImplementedError("Set function for measured effort doesn't exist in isaacsim.core.")
         elif obs_type == ObservationType.SUB_BODY_INERTIA:
             view.set_body_inertias(value, indices=env_indices, body_indices=element_idx)
         elif obs_type == ObservationType.SUB_BODY_MASS:
@@ -479,6 +508,8 @@ class IsaacSimTask(BaseTask):
             view.set_body_coms(positions=value, indices=env_indices, body_indices=element_idx)
         elif obs_type == ObservationType.SUB_BODY_COM_ROT:
             view.set_body_coms(orientations=value, indices=env_indices, body_indices=element_idx)
+        else:
+            raise NotImplementedError()
 
     def _read_property(self, view, obs_type, element_idx=None, env_indices=None, clone=True):
         """
@@ -544,6 +575,8 @@ class IsaacSimTask(BaseTask):
             return view.get_body_coms(indices=env_indices, body_indices=element_idx, clone=clone)[0]
         elif obs_type == ObservationType.SUB_BODY_COM_ROT:
             return view.get_body_coms(indices=env_indices, body_indices=element_idx, clone=clone)[1]
+        else:
+            raise NotImplementedError()
 
     def _set_camera(self):
         """
@@ -573,19 +606,19 @@ class IsaacSimTask(BaseTask):
         Args:
             values (list of tuples): A list where each entry is a tuple containing:
                 - name (str): The name of the physics material.
-                - dynamic_friction (float): The dynamic friction coefficient.
                 - static_friction (float): The static friction coefficient.
+                - dynamic_friction (float): The dynamic friction coefficient.
                 - restitution (float): The restitution coefficient.
         """
         materials = {}
-        for i, (name, dynamic_friction, static_friction, restitution) in enumerate(values):
+        for i, (name, static_friction, dynamic_friction, restitution) in enumerate(values):
             
             if name not in materials:
                 materials[name] = PhysicsMaterial(
                     prim_path=f"/World/Physics_Materials/{name}",
                     name=name,
-                    dynamic_friction=dynamic_friction,
                     static_friction=static_friction,
+                    dynamic_friction=dynamic_friction,
                     restitution=restitution
                 )
             view = GeometryPrimView(self.prim_paths[i] + "/Robot", reset_xform_properties=False)
