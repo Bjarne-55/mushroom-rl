@@ -47,7 +47,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = A1Pos(num_envs, 1000, True, True)
+    mdp = IsaacA1Description(num_envs, 1000, True, True)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
@@ -70,19 +70,18 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
 
     core = VectorCore(agent, mdp)
 
+    """
     dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
     J = torch.mean(dataset.discounted_return).item()
     R = torch.mean(dataset.undiscounted_return).item()
     E = agent.policy.entropy().item()
 
     logger.epoch_info(0, J=J, R=R, entropy=E)
+    """
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
-        if it == 4:
-            dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
-        else:
-            dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
+        dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
         agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
 
         J = torch.mean(dataset.discounted_return).item()
@@ -114,5 +113,5 @@ if __name__ == '__main__':
     )
     num_envs = 4096
 
-    experiment(alg=PPO, num_envs=num_envs, n_epochs=5, n_steps=4096*24*50*6, n_steps_per_fit=4096*24,
+    experiment(alg=PPO, num_envs=num_envs, n_epochs=3, n_steps=4096*24*50*10, n_steps_per_fit=4096*24,
                    n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params)
