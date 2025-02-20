@@ -9,7 +9,11 @@ import torch
 def torch_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(*shape, device=device) + lower
 
-class HoneyBatcher(IsaacSim):
+class HoneyBadger(IsaacSim):
+    """
+    Implements the learning environment for the robot Honey Badger
+    Honey Badger is a Robot from MAB Robotics: https://www.mabrobotics.pl/
+    """
     def __init__(self, num_envs, horizon, headless, domain_randomization):
         self.NUM_DOFS = 12
 
@@ -73,7 +77,7 @@ class HoneyBatcher(IsaacSim):
             ("joint_damping", "", ObservationType.JOINT_GAIN_DAMPING, self._action_spec),
             ("joint_stiffness", "", ObservationType.JOINT_GAIN_STIFFNESS, self._action_spec),
             ("joint_default_pos", "", ObservationType.JOINT_DEFAULT_POS, self._action_spec),
-            ("robot_mass", "", ObservationType.SUB_BODY_MASS, sub_bodies)
+            ("robot_mass", "", ObservationType.SUB_BODY_MASS, sub_bodies),
         ]
         collision_groups = [
             ("groundplane", ["/World/groundPlane/collisionPlane"]), 
@@ -93,11 +97,14 @@ class HoneyBatcher(IsaacSim):
         collision_between_envs = False
         env_spacing = 3.
         physics_material_spec = self._get_values_for_physics_materials(num_envs) if self.domain_randomization else None
+        solver_pos = torch.full((num_envs, ), 4)
+        solver_vel = torch.full((num_envs, ), 4)
+
         IsaacSim.__init__(self, usd_path, self._action_spec, observation_spec, backend, device, collision_between_envs, num_envs, 
                          env_spacing, 0.99, horizon, additional_data_spec=additional_data_spec, collision_groups=collision_groups, 
                          action_type=ActionType.EFFORT, headless=headless, n_intermediate_steps=4, n_substeps=1, timestep=0.005, 
                          physics_material_spec=physics_material_spec, sim_params=sim_params, camera_position=(105, 0, 4), 
-                         camera_target=(95, 0, 0)) 
+                         camera_target=(95, 0, 0), solver_pos_it_count=solver_pos, solver_vel_it_count=solver_vel) 
         self._import_helper_functions()
         self._init_domain_randomization_parameters()
         action_limit = (self._task.get_joint_pos_limits() - self._default_joint_angles) / 0.25
@@ -261,8 +268,14 @@ class HoneyBatcher(IsaacSim):
     def is_absorbing(self, obs):
         #fallen = self._check_collision("body", "groundplane", 0.)
         fallen = torch.norm(self._get_net_collision_forces("body", dt=self._timestep)[:, 0], dim=-1) > 0.
+
+        base_rot = self._read_data("body_rot")
+        base_rot_euler = torch.cat(
+            [((cord + np.pi) % (2 * np.pi) - np.pi).unsqueeze(1) for cord in self.get_euler_xyz(base_rot)], 
+            dim=1)
+        over_rotated = torch.any(torch.abs(base_rot_euler[:, :2]) >= (np.pi / 3), dim=1)
         
-        return fallen
+        return torch.logical_or(fallen, over_rotated)
 
     def setup(self, env_indices, obs):
         self.feet_air_time[env_indices, :] = 0.
@@ -870,7 +883,7 @@ class HoneyBatcher(IsaacSim):
     
     def _reward_height(self, base_z):
         #nominal_base_z = 0.316
-        nominal_base_z = 0.25
+        nominal_base_z = 0.3
         return torch.square(base_z - nominal_base_z)
     
     def _reward_dof_pos_limits(self, dof_pos):
@@ -889,6 +902,7 @@ class HoneyBatcher(IsaacSim):
         ang_vel_error = torch.square(self.commands[:, 2] - ang_vel_z)
         return torch.exp(-ang_vel_error/0.25)
     
+    #TODO center of mass
 
     """
     def _reward_feet_air_time(self):#TODO maybe change back
