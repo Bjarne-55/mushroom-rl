@@ -497,6 +497,9 @@ class HoneyBadger(IsaacSim):
         self._seen_joint_nominal_pos = self._default_joint_angles.repeat((self.number, 1))
         self._seen_joint_max_vel = self._default_joint_max_vel.repeat((self.number, 1))
         self._seen_foot_scaling = torch.ones((self.number, 4), device=self._device)
+        self.seen_trunk_com = self._read_data("trunk_com")
+
+        self._write_data("max_joint_vel", self._seen_joint_max_vel, reapply_after_reset=True)
 
         self._seen_p_gain = torch.full((self.number, self.NUM_DOFS), 20., device=self._device)
         self._seen_d_gain = torch.full((self.number, self.NUM_DOFS), 0.5, device=self._device)
@@ -593,6 +596,7 @@ class HoneyBadger(IsaacSim):
         #trunk com
         actual_trunk_com = self._default_trunk_com \
             + torch_rand_float(add_com_displacement_min, add_com_displacement_max, (n_envs, 1), self._device)
+        self.seen_trunk_com[env_indices] = actual_trunk_com.unsqueeze(1)
         actual_trunk_com *= self._nf_trunk_com[env_indices]
         self._write_data("trunk_com", actual_trunk_com.unsqueeze(1), env_indices, True)
 
@@ -747,6 +751,13 @@ class HoneyBadger(IsaacSim):
             max_value=foot_scaling_max - 1.
         )
 
+        self.observation_helper.add_obs(
+            name="trunk_com",
+            length=3,
+            min_value=-torch.inf,
+            max_value=torch.inf
+        )
+
     def _add_seen_parameters(self, obs):
         joint_nominal_pos_ids = self.observation_helper.obs_idx_map["joint_nominal_position"]
         obs[:, joint_nominal_pos_ids] = self._seen_joint_nominal_pos
@@ -783,6 +794,9 @@ class HoneyBadger(IsaacSim):
 
         foot_scale_ids = self.observation_helper.obs_idx_map["foot_size"]
         obs[:, foot_scale_ids] = self._seen_foot_scaling
+
+        trunk_com_ids = self.observation_helper.obs_idx_map["trunk_com"]
+        obs[:, trunk_com_ids] = self.seen_trunk_com.squeeze(1)
 
         return obs
 
@@ -829,7 +843,7 @@ class HoneyBadger(IsaacSim):
         r_action_rate = self._reward_action_rate(action) * -1e-2 * self.dt
         r_collision = (self._reward_collision() + absorbing) * -1 * self.dt
         r_height = self._reward_height(base_pos_z) * -3e1 * self.dt
-        r_feet_air_time = self._reward_feet_air_time() * 1. * self.dt
+        r_feet_air_time = self._reward_feet_air_time() * 1e-1 * self.dt
         r_symmetry = self._reward_symmetry() * -0.5 * self.dt
 
         penalties = r_lin_vel + r_ang_vel + r_ang_pos + r_dof_pos_limits + r_dof_acc + r_torque + r_action_rate \
@@ -924,7 +938,6 @@ class HoneyBadger(IsaacSim):
         return rew_airTime
     """
     
-    """
     def _reward_feet_air_time(self):#TODO maybe change back
         contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
         for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
@@ -937,8 +950,8 @@ class HoneyBadger(IsaacSim):
         self.feet_air_time *= ~contact
 
         return rew_airTime
-    """
 
+    """
     def _reward_feet_air_time(self):
         # Reward long steps
         contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
@@ -953,6 +966,7 @@ class HoneyBadger(IsaacSim):
         rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
         self.feet_air_time *= ~contact_filt
         return rew_airTime
+    """
     
     def _reward_symmetry(self):
         contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
