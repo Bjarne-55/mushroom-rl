@@ -13,7 +13,7 @@ from mushroom_rl.core import VectorCore, Logger
 from mushroom_rl.algorithms.actor_critic import TRPO, PPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
-from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym_pos import IsaacA1Description
+from mushroom_rl.environments.isaacsim_envs.isaac_a1_pos_action import A1Pos
 from mushroom_rl.utils import TorchUtils
 
 
@@ -54,7 +54,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = IsaacA1Description(num_envs, 200, True)
+    mdp = A1Pos(num_envs, 1000, True, True)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
@@ -119,6 +119,6 @@ if __name__ == '__main__':
         use_cuda=True,
         ent_coeff=0.01
     )
-    num_envs = 2048
+    num_envs = 4096
     experiment(alg=PPO, num_envs=num_envs, n_epochs=30, n_steps=4096*24*50, n_steps_per_fit=4096*24,
                    n_episodes_test=num_envs, alg_params=ppo_params, policy_params=policy_params)
