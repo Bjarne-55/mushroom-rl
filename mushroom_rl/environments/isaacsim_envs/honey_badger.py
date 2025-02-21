@@ -843,7 +843,7 @@ class HoneyBadger(IsaacSim):
         r_action_rate = self._reward_action_rate(action) * -1e-2 * self.dt
         r_collision = (self._reward_collision() + absorbing) * -1 * self.dt
         r_height = self._reward_height(base_pos_z) * -3e1 * self.dt
-        r_feet_air_time = self._reward_feet_air_time() * 1e-1 * self.dt
+        r_feet_air_time = self._reward_feet_air_time() * 1 * self.dt
         r_symmetry = self._reward_symmetry() * -0.5 * self.dt
 
         penalties = r_lin_vel + r_ang_vel + r_ang_pos + r_dof_pos_limits + r_dof_acc + r_torque + r_action_rate \
@@ -938,6 +938,7 @@ class HoneyBadger(IsaacSim):
         return rew_airTime
     """
     
+    """
     def _reward_feet_air_time(self):#TODO maybe change back
         contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
         for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
@@ -950,8 +951,8 @@ class HoneyBadger(IsaacSim):
         self.feet_air_time *= ~contact
 
         return rew_airTime
-
     """
+
     def _reward_feet_air_time(self):
         # Reward long steps
         contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
@@ -966,7 +967,6 @@ class HoneyBadger(IsaacSim):
         rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
         self.feet_air_time *= ~contact_filt
         return rew_airTime
-    """
     
     def _reward_symmetry(self):
         contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
