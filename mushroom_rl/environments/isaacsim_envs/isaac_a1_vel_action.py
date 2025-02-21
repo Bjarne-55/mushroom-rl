@@ -69,7 +69,7 @@ class A1Vel(IsaacA1Description):
                          camera_target=camera_target) 
         self._import_helper_functions()
         self._set_stiffness_damping()
-        new_action_space = self._mdp_info.action_space.low / 0.25, self._mdp_info.action_space.high / 0.25
+        new_action_space = self._mdp_info.action_space.low / 1.5, self._mdp_info.action_space.high / 1.5
         self._mdp_info.action_space = Box(*new_action_space, data_type=new_action_space[0].dtype)
         
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)
@@ -112,12 +112,12 @@ class A1Vel(IsaacA1Description):
 
     def _set_stiffness_damping(self):
         env_ids = torch.arange(0, self.number, 1, dtype=int, device=self._device)
-        self._write_data("joint_damping", torch.full((self.number, self.NUM_DOFS), 0.5, device=self._device), env_ids, reapply_after_reset=True)
+        self._write_data("joint_damping", torch.full((self.number, self.NUM_DOFS), 30., device=self._device), env_ids, reapply_after_reset=True)
         self._write_data("joint_stiffness", torch.full((self.number, self.NUM_DOFS), 0., device=self._device), env_ids, reapply_after_reset=True)
     
     def _compute_action(self, obs, action):
-        desired_position = action
-        return desired_position
+        desired_velocity = action * 1.5
+        return desired_velocity
     
     def _step_finalize(self, env_indices):
         self._torques = self._read_data("joint_measured_effort")
