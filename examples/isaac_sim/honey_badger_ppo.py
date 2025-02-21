@@ -85,10 +85,11 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     J = torch.mean(dataset.discounted_return).item()
     R = torch.mean(dataset.undiscounted_return).item()
     E = agent.policy.entropy().item()
+    A = dataset.absorbing.sum().item()
     penalities = torch.mean(dataset.info["penalties"]).item()
     tracking_reward = torch.mean(dataset.info["tracking_reward"]).item()
     
-    logger.epoch_info(0, J=J, R=R, entropy=E, penalities=penalities, tracking=tracking_reward)
+    logger.epoch_info(0, J=J, R=R, entropy=E, A=A, penalities=penalities, tracking=tracking_reward)
 
     dir = str(time.time())
     agent.save(f"stored_agents/{alg.__name__}_honey_batcher/{dir}/iteration_{0}.zip", True)
@@ -100,10 +101,11 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
         J = torch.mean(dataset.discounted_return).item()
         R = torch.mean(dataset.undiscounted_return).item()
         E = agent.policy.entropy().item()
+        A = dataset.absorbing.sum().item()
         penalities = torch.mean(dataset.info["penalties"]).item()
         tracking_reward = torch.mean(dataset.info["tracking_reward"]).item()
     
-        logger.epoch_info(it + 1, J=J, R=R, entropy=E, penalities=penalities, tracking=tracking_reward)
+        logger.epoch_info(it + 1, J=J, R=R, entropy=E, A=A, penalities=penalities, tracking=tracking_reward)
 
     #logger.info('Press a button to visualize')
     #input()
