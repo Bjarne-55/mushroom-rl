@@ -4,7 +4,7 @@ import hydra
 import math
 
 from omni.isaac.core.tasks import BaseTask
-from omni.isaac.core.utils.stage import add_reference_to_stage
+import omni.isaac.core.utils.prims as prim_utils
 from omni.isaac.core.articulations import ArticulationView
 from omni.isaac.cloner import GridCloner
 from omni.usd import get_context
@@ -115,32 +115,44 @@ class IsaacSimTask(BaseTask):
         self._create_light(stage)
 
         #Define env_0
-        add_reference_to_stage(self.usd_path, self.ZERO_ENV_PATH + "/Robot")
+        prim_utils.create_prim(
+            self.ZERO_ENV_PATH + "/Robot",
+            usd_path=self.usd_path,
+            #translation=(0., 0., 0.42)
+        )
 
         self.collision_helper.prepare_env(stage)
 
         #clone env_0
         self._cloner = GridCloner(spacing=self._env_spacing)
         self._cloner.define_base_env(self.BASE_ENV_PATH)
-        
-        UsdGeom.Xform.Define(stage, self.ZERO_ENV_PATH)
-
         self.prim_paths = self._cloner.generate_paths(self.TEMPLATE_ENV_PATH, self._num_envs)
+        # create source prim
+        stage.DefinePrim(self.prim_paths[0], "Xform")
+
         self.env_pos = self._cloner.clone(
-            source_prim_path=self.ZERO_ENV_PATH, 
+            source_prim_path=self.prim_paths[0], 
             prim_paths=self.prim_paths, 
             replicate_physics=True, 
             copy_from_source=False #Faster, but changes made to source prim will also reflect in the cloned prims
         )
         self.env_pos = np.float32(self.env_pos)
         self.env_pos = ArrayBackend.convert(self.env_pos, to=self._backend)
+
+        self._cloner.replicate_physics(
+            source_prim_path=self.prim_paths[0],
+            prim_paths=self.prim_paths,
+            base_env_path=self.BASE_ENV_PATH,
+            root_path=self.TEMPLATE_ENV_PATH + "_",
+        )
         
         #handle collisions between environments
         if not self._collisions_between_envs:
             self._cloner.filter_collisions(
                 self._physic_context.prim_path,
                 "/World/collisions",
-                self.prim_paths
+                self.prim_paths,
+                global_paths=["/World/groundPlane"]
             )
         
         self.robots = ArticulationView(
@@ -590,7 +602,7 @@ class IsaacSimTask(BaseTask):
         self.camera_state.set_target_world(Gf.Vec3d(self._initial_camera_target), True)
 
         rp = rep.create.render_product("/OmniverseKit_Persp", (1280, 720))
-        self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb")
+        self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb", do_array_copy=False, device="cuda") #, 
         self.rgb_annot.attach(rp)
     
     def _create_light(self, stage, prim_path="/World/defaultDistantLight", intensity=1000):
