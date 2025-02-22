@@ -211,7 +211,7 @@ class IsaacA1Description(IsaacSim):
 
     def is_absorbing(self, obs):
         #fallen = self._check_collision("body", "groundplane", 0.)
-        fallen = torch.norm(self._get_net_collision_forces("body", dt=0.006)[:, 0, 0], dim=-1) > 1.
+        fallen = torch.norm(self._get_net_collision_forces("body", dt=self._timestep)[:, 0, :], dim=-1) > 1.
         
         return fallen
     
