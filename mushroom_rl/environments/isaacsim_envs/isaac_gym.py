@@ -145,7 +145,7 @@ class IsaacGymTask:
     def get_joint_max_efforts(self):
         return torch.tensor([20., 55., 55., 20., 55., 55., 20., 55., 55., 20., 55., 55.], device='cuda:0') 
     
-    def write_data(self, name, value, env_indices=None):
+    def write_data(self, name, value, env_indices=None, reapply_after_reset=False):
         if env_indices is not None and env_indices.shape[0] == 0:
             return
         if env_indices is None:
@@ -283,7 +283,8 @@ class IsaacGym(IsaacA1Description):
         self._timestep = timestep
         self._world = None
 
-    def _set_task(self, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, actuation_spec, additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target):
+    def _set_task(self, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, actuation_spec, additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target, solver_pos_it_count=None, solver_vel_it_count=None,
+                 ground_plane_friction=None):
         self._task = IsaacGymTask(num_envs, "cuda:0")
         self._world = self._task
 
