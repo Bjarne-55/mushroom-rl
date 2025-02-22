@@ -25,7 +25,7 @@ class CollisionHelper:
         self._num_envs = num_envs
         self.collision_groups = {key: group for key, group in collision_groups} if collision_groups is not None else {}
         self._n_intermediate_steps = n_intermediate_steps
-
+        
     def prepare_env(self, stage):
         """
         Ensures that all objects in the collision groups possess the necessary APIs.
@@ -52,39 +52,36 @@ class CollisionHelper:
         from omni.isaac.core.prims import RigidContactView
 
         self._views = {}
-        self._collision_force_buffer = {}
         self._collision_groups_indices = {}
         self._collision_group_contains_world = {key: False for key in self.collision_groups}
 
         for group_name, group in self.collision_groups.items():
+            self._collision_group_contains_world[group_name] = any([path.startswith("/World/") for path in group])
+            if self._collision_group_contains_world[group_name]:
+                continue
+
             possible_partners = reduce(
                 lambda acc, val: acc + val if val not in acc else acc, [value for key, value in self.collision_groups.items() if key != group_name], []
             )
             self._collision_groups_indices[group_name] = {key: self._arr_backend.from_list([possible_partners.index(value) for value in self.collision_groups[key]]) for key in self.collision_groups if key != group_name}
-            possible_partners = [self.BASE_ENV_PATH + "/.*/Robot" + partner if not partner.startswith("/World/") else partner for partner in possible_partners]
-            for path in group:
-                if path in self._views:
-                    continue
-                if path.startswith("/World/"):
-                    self._collision_group_contains_world[group_name] = True
-                    continue
-                view = RigidContactView(
-                    prim_paths_expr= self.BASE_ENV_PATH + "/.*/Robot" + path,
-                    name=path.replace("/", "_") + "_view",
-                    filter_paths_expr=possible_partners,
-                    prepare_contact_sensors=False
-                )
-                self._views[path] = view
-                self._collision_force_buffer[path] = self._arr_backend.zeros((self._n_intermediate_steps, self._num_envs, len(possible_partners), 3), device=self._device)
+            possible_partners = [self.BASE_ENV_PATH + "/env_*/Robot" + partner if not partner.startswith("/World/") else partner for partner in possible_partners]
+            
+            paths = [self.BASE_ENV_PATH + "/env_*/Robot" + path for path in group if not path.startswith("/World/")]
+            view = RigidContactView(
+                prim_paths_expr=paths,
+                name=group_name + "_view",
+                filter_paths_expr=[possible_partners]*len(paths),
+                prepare_contact_sensors=False
+            )
+            self._views[group_name] = view
+        #sensor_count
     
     def post_reset(self):
         """
         Called after world.reset() is completed.
         """
-        for path in self._views:
-            self._views[path].initialize()
-
-        self.index = 0
+        for group in self._views:
+            self._views[group].initialize()
 
     def get_collision_force(self, group1, group2, selector=None, dt=1.0):
         """
@@ -103,17 +100,22 @@ class CollisionHelper:
             A tensor or array containing the computed collision forces between the groups, 
             processed by the `selector` function.
         """
+        assert not(self._collision_group_contains_world[group1] and self._collision_group_contains_world[group2])
+        
         if selector is None:
             selector = lambda x: self._arr_backend.max(self._arr_backend.norm(x, dim=2), dim=1)
 
         if self._collision_group_contains_world[group2]:
-            prims = self.collision_groups[group1]
-            indices_prims2 = self._collision_groups_indices[group1][group2]
+            group = group1
+            indices_prims = self._collision_groups_indices[group1][group2]
         else:
-            prims = self.collision_groups[group2]
-            indices_prims2 = self._collision_groups_indices[group2][group1]
+            group = group2
+            indices_prims = self._collision_groups_indices[group2][group1]
         
-        forces = torch.cat([self._views[p].get_contact_force_matrix(clone=False, dt=dt)[:, indices_prims2] for p in prims], dim=1)
+        forces = self._views[group].get_contact_force_matrix(clone=False, dt=dt)
+        #transform to (num_envs, n_bodies, 3)
+        forces = forces.view(-1, self._num_envs, 3).transpose(0, 1)
+        forces = forces[:, indices_prims]
 
         return selector(forces)
     
@@ -165,9 +167,9 @@ class CollisionHelper:
         return self._arr_backend.sum(forces > threshold, dim=1)
     
     def get_net_contact_forces(self, group, dt=1.0):
-        prims = self.collision_groups[group]
-
-        forces = self._arr_backend.concatenate([self._views[p].get_net_contact_forces(dt=dt).unsqueeze(1) for p in prims], dim=1)
+        forces = self._views[group].get_net_contact_forces(dt=dt)
+        forces = forces.view(-1, self._num_envs, 3).transpose(0, 1)
+        
         return forces
 
     @property

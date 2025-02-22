@@ -129,8 +129,24 @@ class IsaacSim(VectorizedEnvironment):
 
         carb.settings.get_settings().set("/persistent/omnihydra/useSceneGraphInstancing", True)
         carb.settings.get_settings().set_bool("/physics/physxDispatcher", True)
-        carb.settings.get_settings().set("/app/viewport/grid/enabled", False)
-        carb.settings.get_settings().set("/app/runLoops/main/rateLimitEnabled", False)
+
+        carb.settings.get_settings().set_bool("/physics/disableContactProcessing", True)
+        carb.settings.get_settings().set_bool("/physics/collisionConeCustomGeometry", False)
+        carb.settings.get_settings().set_bool("/physics/collisionCylinderCustomGeometry", False)
+
+        #default values from IsaacLab
+        carb.settings.get_settings().set_bool("/rtx/translucency/enabled", False)
+        carb.settings.get_settings().set_bool("/rtx/reflections/enabled", False)
+        carb.settings.get_settings().set_bool("/rtx/indirectDiffuse/enabled", False)
+        carb.settings.get_settings().set_bool("/rtx-transient/dlssg/enabled", False)
+        #carb.settings.get_settings().set_bool("/rtx-transient/dldenoiser/enabled", False)
+        carb.settings.get_settings().set_int("/rtx/post/dlss/execMode", 0)
+        carb.settings.get_settings().set_bool("/rtx/directLighting/enabled", True)
+        carb.settings.get_settings().set_int(
+            "/rtx/directLighting/sampledLighting/samplesPerPixel", 1
+        )
+        carb.settings.get_settings().set_bool("/rtx/shadows/enabled", True) 
+        carb.settings.get_settings().set_bool("/rtx/ambientOcclusion/enabled", False)
 
     def _create_world(self, timestep, custom_sim_params=None):
         """
@@ -146,8 +162,9 @@ class IsaacSim(VectorizedEnvironment):
             'gravity': [0.0, 0.0, -9.81], 
             'use_gpu_pipeline': True, 
             'use_fabric': True, 
-            'enable_scene_query_support': True, 
-            'use_gpu': True
+            'enable_scene_query_support': False, 
+            'use_gpu': True,
+            'disable_contact_processing': True
         }
         if custom_sim_params is not None:
             sim_params.update(custom_sim_params)
@@ -161,6 +178,7 @@ class IsaacSim(VectorizedEnvironment):
         )
         self._physics_context = self._world.get_physics_context()
         self._physics_context.enable_gpu_dynamics(True)
+        self._physics_context.enable_ccd(False)
 
         if timestep is None:
             self._timestep = self._world.get_physics_dt()
@@ -196,7 +214,7 @@ class IsaacSim(VectorizedEnvironment):
                 Defaults to False.
         """
         self._world.render()
-        data = self._task.rgb_annot.get_data()[..., :3]
+        data = self._task.rgb_annot.get_data().numpy()[..., :3]
 
         if self._viewer is None:
             self._viewer = ImageViewer((1280, 720), 0)
@@ -223,7 +241,7 @@ class IsaacSim(VectorizedEnvironment):
         """
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
 
-        cur_obs = self._obs.clone().detach()
+        #cur_obs = self._obs.clone().detach()
 
         action = self._preprocess_action(action)
 
@@ -232,24 +250,22 @@ class IsaacSim(VectorizedEnvironment):
 
         ctrl_action = None
 
-        for _ in range(self._n_intermediate_steps):
+        for i in range(self._n_intermediate_steps):
             if self._recompute_action_per_step or ctrl_action is None:
-                ctrl_action = self._compute_action(cur_obs, action)
+                ctrl_action = self._compute_action(action)
 
             self._simulation_pre_step()
 
             self._task.apply_action(ctrl_action[env_indices], env_indices)
-            self._world.step(render=not self._headless)
+            self._world.step(render=False)
+
+            if not self._headless and i == self._n_intermediate_steps - 1:
+                self._world.render()
 
             self._simulation_post_step()
 
-            if self._recompute_action_per_step:
-                cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
-                cur_obs = self._create_observation(cur_obs)
-
-        if not self._recompute_action_per_step:
-            cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
-            cur_obs = self._create_observation(cur_obs)
+        cur_obs = self.observation_helper.build_obs(self._task.get_observations(clone=False))
+        cur_obs = self._create_observation(cur_obs)
 
         self._step_finalize(env_indices)
 
@@ -257,7 +273,7 @@ class IsaacSim(VectorizedEnvironment):
         reward = self.reward(self._obs, action, cur_obs, absorbing)
         extra_info = self._create_info_dictionary(cur_obs)
 
-        self._obs = cur_obs.clone().detach()#TODO maybe only update active envs
+        #self._obs = cur_obs.clone().detach()#TODO maybe only update active envs
 
         cur_obs = self._modify_observation(cur_obs)
         

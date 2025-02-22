@@ -40,14 +40,15 @@ class IsaacA1Description(IsaacSim):
             ("body_rot", "", ObservationType.BODY_ROT, None), 
             ("body_vel", "", ObservationType.BODY_VEL, None)
         ]
+        """
         collision_groups = [
-            ("groundplane", ["/World/groundPlane/collisionPlane"]), 
-            ("FL_foot", ["/FL_foot"]), 
-            ("FR_foot", ["/FR_foot"]), 
-            ("RL_foot", ["/RL_foot"]), 
-            ("RR_foot", ["/RR_foot"]),
+            ("foots", ["/FL_foot", "/FR_foot", "/RL_foot", "/RR_foot"]), 
             ("body", ["/trunk"]),
             ("lower_body", ["/FL_thigh", "/FR_thigh", "/RL_thigh", "/RR_thigh", "/FL_calf", "/FR_calf", "/RL_calf", "/RR_calf"])
+        ]
+        """
+        collision_groups = [
+            ("body", ["/trunk", "/FL_foot", "/FR_foot", "/RL_foot", "/RR_foot", "/FL_thigh", "/FR_thigh", "/RL_thigh", "/RR_thigh", "/FL_calf", "/FR_calf", "/RL_calf", "/RR_calf"]),
         ]
         collision_between_envs = False
         env_spacing = 3.
@@ -210,7 +211,7 @@ class IsaacA1Description(IsaacSim):
 
     def is_absorbing(self, obs):
         #fallen = self._check_collision("body", "groundplane", 0.)
-        fallen = torch.norm(self._get_net_collision_forces("body", dt=self._timestep)[:, 0], dim=-1) > 1.
+        fallen = torch.norm(self._get_net_collision_forces("body", dt=0.006)[:, 0, 0], dim=-1) > 1.
         
         return fallen
     
@@ -311,9 +312,11 @@ class IsaacA1Description(IsaacSim):
         self._actions[:] = action[:]
         return action
     
-    def _compute_action(self, obs, action):
-        joint_vels = self.observation_helper.get_from_obs(obs, "joint_vel")
-        dof_positions = self.observation_helper.get_from_obs(obs, "joint_pos")
+    def _compute_action(self, action):
+        #joint_vels = self.observation_helper.get_from_obs(obs, "joint_vel")
+        #dof_positions = self.observation_helper.get_from_obs(obs, "joint_pos")
+        joint_vels = self._read_data("joint_vel")
+        dof_positions = self._read_data("joint_pos")
         torque = self._compute_torque(action, joint_vels, dof_positions)
         return torque
     
@@ -393,7 +396,7 @@ class IsaacA1Description(IsaacSim):
     
     def _reward_collision(self):
         # Penalize collisions on selected bodies
-        contact = torch.norm(self._get_net_collision_forces("lower_body", dt=self._timestep), dim=-1) > 0.1
+        contact = torch.norm(self._get_net_collision_forces("body", dt=self._timestep)[:, 5:], dim=-1) > 0.1
         return torch.sum(contact, dim=1)
         #return self._get_collision_count("lower_body", "groundplane")
     
@@ -415,10 +418,8 @@ class IsaacA1Description(IsaacSim):
 
     def _reward_feet_air_time(self):
         # Reward long steps
-        contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
-        for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
-            #contact[:, i] = self._check_collision(foot, "groundplane", 1., lambda x: torch.max(torch.max(x[:, :, :, 2], dim=2).values, dim=0).values, dt=self._timestep) #check if this is actually correct
-            contact[:, i] = self._get_net_collision_forces(foot, dt=self._timestep)[:, 0, 2] > 1. #1/4 mass of robot * 9.81
+        #contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
+        contact = self._get_net_collision_forces("body", dt=self._timestep)[:, 1:5, 2] > 1. #1/4 mass of robot * 9.81
         contact_filt = torch.logical_or(contact, self.last_contacts) #contact
         self.last_contacts = contact
         first_contact = (self.feet_air_time > 0.) * contact_filt
