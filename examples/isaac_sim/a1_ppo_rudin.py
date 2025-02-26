@@ -11,6 +11,7 @@ import time
 
 from mushroom_rl.core import VectorCore, Logger
 from mushroom_rl.algorithms.actor_critic.deep_actor_critic.ppo_nikita import NikitaPPO
+from mushroom_rl.algorithms.actor_critic.deep_actor_critic import PPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
 from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
@@ -51,7 +52,7 @@ class Network(nn.Module):
 
         return a
 
-def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
+def experiment(mdp, alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
                alg_params, policy_params, seed):
 
     logger = Logger(alg.__name__ + "_1_legged_gym", results_dir="./logs/", log_console=True, use_timestamp=True)
@@ -59,12 +60,10 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
     torch.set_printoptions(precision=8)
-    mdp = A1Pos(num_envs, 1000, True, True)
-    mdp.seed(seed)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
-                                    'params': {'lr': 1e-3}},
+                                    'params': {'lr': 1e-4}},
                          loss=F.mse_loss,
                          n_features=[512, 256, 128],
                          batch_size=int((4096*24) / 16),
@@ -80,30 +79,37 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     alg_params['critic_params'] = critic_params
 
     agent = alg(mdp.info, policy, **alg_params)
-    #agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1739340890.6037955.zip")
+    #agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1740443391.3699453.zip")
     #agent.set_logger(logger)
 
     core = VectorCore(agent, mdp)
-
-    dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
+    """
+    dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
 
     J = torch.mean(dataset.discounted_return).to("cpu").item()
     R = torch.mean(dataset.undiscounted_return.to("cpu")).item()
     E = agent.policy.entropy().to("cpu").item()
     V = torch.mean(agent._V(dataset.get_init_states())).detach().to("cpu").item()
+    A = dataset.absorbing.sum().item()
 
-    logger.epoch_info(0, J=J, R=R, entropy=E, V=V)
+    logger.epoch_info(0, J=J, R=R, entropy=E, V=V, A=A)
+    """
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
-        dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
+        #dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
+        if (it + 1) % 5 == 0 or it == n_epochs - 1:
+            dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
+        else:
+            dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
 
         J = torch.mean(dataset.discounted_return).to("cpu").item()
         R = torch.mean(dataset.undiscounted_return).to("cpu").item()
         E = agent.policy.entropy().to("cpu").item()
         V = torch.mean(agent._V(dataset.get_init_states())).detach().to("cpu").item()
+        A = dataset.absorbing.sum().item()
 
-        logger.epoch_info(it+1, J=J, R=R, entropy=E, V=V)
+        logger.epoch_info(it+1, J=J, R=R, entropy=E, V=V, A=A)
         agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
 
     #logger.info('Press a button to visualize')
@@ -116,20 +122,22 @@ if __name__ == '__main__':
     TorchUtils.set_default_device('cuda:0')
     ppo_params = dict(
         actor_optimizer={'class': optim.Adam,
-        'params': {'lr': 1e-3}},#changed from 1e-3
+        'params': {'lr': 1e-4}},#changed from 1e-3
         n_epochs_policy=5,
         batch_size=int((4096*24) / 16),
         eps_ppo=.2,
-        lam=.95
+        lam=.95,
+        ent_coeff=0.01
     )
     policy_params = dict(
         std_0=1.,
         n_features=[512, 256, 128],
-        use_cuda=True,
-        ent_coeff=0.01
+        use_cuda=True
     )
     num_envs = 4096
 
     seed = 1
-    experiment(alg=NikitaPPO, num_envs=num_envs, n_epochs=4, n_steps=4096*24*50*10, n_steps_per_fit=4096*24,
+    mdp = IsaacA1Description(num_envs, 1000, True, True)
+    mdp.seed(seed)
+    experiment(mdp, alg=NikitaPPO, num_envs=num_envs, n_epochs=30, n_steps=4096*24*41, n_steps_per_fit=4096*24,
         n_episodes_test=512, alg_params=ppo_params, policy_params=policy_params, seed=seed)

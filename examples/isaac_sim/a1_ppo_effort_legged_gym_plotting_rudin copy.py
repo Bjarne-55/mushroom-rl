@@ -20,7 +20,6 @@ from mushroom_rl.utils.plot import plot_mean_conf
 import matplotlib.pyplot as plt
 import os
 
-"""
 class Network(nn.Module):
     def __init__(self, input_shape, output_shape, n_features, **kwargs):
         super(Network, self).__init__()
@@ -49,42 +48,6 @@ class Network(nn.Module):
         a = self._h4(features3)
 
         return a
-"""
-
-class Network(nn.Module):
-    def __init__(self, input_shape, output_shape, n_features, **kwargs):
-        super(Network, self).__init__()
-
-        n_input = input_shape[-1]
-        n_output = output_shape[0]
-
-        self.actor = nn.Sequential(
-            nn.Linear(n_input, n_features[0]),
-            nn.ELU(alpha=1.),
-            nn.Linear(n_features[0], n_features[1]),
-            nn.ELU(alpha=1.),
-            nn.Linear(n_features[1], n_features[2]),
-            nn.ELU(alpha=1.),
-            nn.Linear(n_features[2], n_output)
-        )
-
-    def forward(self, state, **kwargs):
-        state = torch.squeeze(state, 1).float()
-        return self.actor(state)
-"""
-
-class A1LeggedGymActor(IsaacA1Description):
-    def _modify_observation(self, obs):
-        obs = super()._modify_observation(obs)
-        new_obs = obs.clone().detach()
-        new_obs[:, 6:9] = self.observation_helper.get_from_obs(obs, "projected_gravity")
-        new_obs[:, 9:12] = self.observation_helper.get_from_obs(obs, "commands")
-        new_obs[:, 12:24] = self.observation_helper.get_from_obs(obs, "joint_pos")
-        new_obs[:, 24:36] = self.observation_helper.get_from_obs(obs, "joint_vel")
-        new_obs[:, 36:48] = self.observation_helper.get_from_obs(obs, "actions")
-
-        return new_obs
-"""
 
 def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
                alg_params, policy_params, seed):
@@ -117,7 +80,22 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     #agent = agent.load("/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/stored_agents/a1_ppo/1738683996.96745.zip")
     #agent.set_logger(logger)
 
-    core = VectorCore(agent, mdp)
+    from mushroom_rl.core import VectorizedDataset, MDPInfo
+    reward_sum = np.zeros((mdp.number, ))
+    finished_episode = np.zeros((mdp.number, ))
+    def callback_step(samples):
+        nonlocal reward_sum
+        reward = samples[2].cpu().numpy()
+        last = samples[5].cpu().numpy()
+        reward_sum += reward
+        finished_episode[last] = reward_sum[last].copy()
+        reward_sum[last] *= 0
+
+    def callback_fit(dataset):
+        non_zeros_return = finished_episode[np.nonzero(finished_episode)]
+        print(f"\n undiscounted return: {non_zeros_return.mean().item()}, length: {len(non_zeros_return)}")
+
+    core = VectorCore(agent, mdp, callback_step=callback_step, callbacks_fit=[callback_fit])
 
     Js = []
     Rs = []
@@ -185,19 +163,19 @@ if __name__ == '__main__':
         n_epochs_policy=5,
         batch_size=int((4096*24) / 4),
         eps_ppo=.2,
-        lam=.95
+        lam=.95,
+        ent_coeff=0.01
     )
     policy_params = dict(
         std_0=1.,
         n_features=[512, 256, 128],
-        use_cuda=True,
-        ent_coeff=0.01
+        use_cuda=True
     )
     num_envs = 4096
 
     seed = 1
-    Js, Rs, Es, Vs, INFOs = experiment(alg=NikitaPPO, num_envs=num_envs, n_epochs=10, n_steps=4096*24*200, n_steps_per_fit=4096*24,
-                   n_episodes_test=128, alg_params=ppo_params, policy_params=policy_params, seed=seed)
+    Js, Rs, Es, Vs, INFOs = experiment(alg=NikitaPPO, num_envs=num_envs, n_epochs=1, n_steps=4096*24*50*30, n_steps_per_fit=4096*24,
+                   n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params, seed=seed)
     
     dir = "plots/a1_effort_ppo/" + str(time.time())
     os.makedirs(dir)
