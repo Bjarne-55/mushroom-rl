@@ -135,7 +135,8 @@ class IsaacA1Description(IsaacSim):
 
         #resample commands and calculate yaw command
         #env_ids = (self.episode_length % int(10. / self.dt)==0).nonzero(as_tuple=False).flatten()
-        do_resample = self.torch_rand_float(0., 1., (len(env_indices), 1), device=self._device).squeeze() < (1./500.)
+
+        do_resample = self.torch_rand_float(0., 1., (len(env_indices), 1), device=self._device).squeeze(-1) < (1./500.)
         do_resample *= self.episode_length[env_indices] > 50
         env_ids = env_indices[do_resample]
         self._resample_commands(env_ids)
@@ -146,7 +147,7 @@ class IsaacA1Description(IsaacSim):
         self.commands[:, 2] = torch.clip(0.5*self.wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
 
         #domain randomization: push Robot
-        do_push = self.torch_rand_float(0., 1., (len(env_indices), 1), device=self._device).squeeze() < (1./750.)
+        do_push = self.torch_rand_float(0., 1., (len(env_indices), 1), device=self._device).squeeze(-1) < (1./750.)
         do_push_ids = env_indices[do_push]
         do_push_ids = do_push_ids[self.episode_length[do_push_ids] > 50]
         if self.domain_randomization: #not self.eval
