@@ -81,11 +81,8 @@ class HoneyBadger(IsaacSim):
         ]
         collision_groups = [
             ("groundplane", ["/World/groundPlane/collisionPlane"]), 
-            ("FL_foot", ["/fl_foot"]), 
-            ("FR_foot", ["/fr_foot"]), 
-            ("RL_foot", ["/rl_foot"]), 
-            ("RR_foot", ["/rr_foot"]),
-            ("body", ["/body"]),
+            ("foots", ["/fl_foot", "/fr_foot", "/rl_foot", "/rr_foot"]), 
+            ("body", ["/body", "/fl_l1", "/fr_l1", "/rl_l1", "/rr_l1"]),
             ("lower_body", ["/fl_l2", "/fr_l2", "/rl_l2", "/rr_l2"])
         ]
         sim_params = {
@@ -431,9 +428,9 @@ class HoneyBadger(IsaacSim):
         self._actions[:] = action[:]
         return action
     
-    def _compute_action(self, obs, action):
-        joint_vels = self.observation_helper.get_from_obs(obs, "joint_vel")
-        dof_positions = self.observation_helper.get_from_obs(obs, "joint_pos")
+    def _compute_action(self, action):
+        joint_vels = self._read_data("joint_vel")
+        dof_positions = self._read_data("joint_pos")
         torque = self._compute_torque(action, joint_vels, dof_positions)
         return torque
     
@@ -843,7 +840,7 @@ class HoneyBadger(IsaacSim):
         r_action_rate = self._reward_action_rate(action) * -1e-2 * self.dt
         r_collision = (self._reward_collision() + absorbing) * -1 * self.dt
         r_height = self._reward_height(base_pos_z) * -3e1 * self.dt
-        r_feet_air_time = self._reward_feet_air_time() * 1 * self.dt
+        r_feet_air_time = self._reward_feet_air_time() * 1e-1 * self.dt
         r_symmetry = self._reward_symmetry() * -0.5 * self.dt
 
         penalties = r_lin_vel + r_ang_vel + r_ang_pos + r_dof_pos_limits + r_dof_acc + r_torque + r_action_rate \
@@ -938,11 +935,8 @@ class HoneyBadger(IsaacSim):
         return rew_airTime
     """
     
-    """
     def _reward_feet_air_time(self):#TODO maybe change back
-        contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
-        for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
-            contact[:, i] = self._check_collision(foot, "groundplane")
+        contact = self._check_collision("foots", "groundplane", selector=lambda x: torch.max(torch.norm(x, dim=3), dim=2).values)
     
         rew_airTime = torch.sum((self.feet_air_time - 0.5) * contact, dim=1)
         rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
@@ -951,14 +945,11 @@ class HoneyBadger(IsaacSim):
         self.feet_air_time *= ~contact
 
         return rew_airTime
-    """
 
+    """
     def _reward_feet_air_time(self):
         # Reward long steps
-        contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
-        for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
-            #contact[:, i] = self._check_collision(foot, "groundplane", 1., lambda x: torch.max(torch.max(x[:, :, :, 2], dim=2).values, dim=0).values, dt=self._timestep) #check if this is actually correct
-            contact[:, i] = self._get_net_collision_forces(foot, dt=self._timestep)[:, 0, 2] > 1. #1/4 mass of robot * 9.81
+        contact = self._get_net_collision_forces("foots", dt=self._timestep)[:, :, 2] > 1. #1/4 mass of robot * 9.81
         contact_filt = torch.logical_or(contact, self.last_contacts) #contact
         self.last_contacts = contact
         first_contact = (self.feet_air_time > 0.) * contact_filt
@@ -967,11 +958,10 @@ class HoneyBadger(IsaacSim):
         rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
         self.feet_air_time *= ~contact_filt
         return rew_airTime
+    """
     
     def _reward_symmetry(self):
-        contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
-        for i, foot in enumerate(["FL_foot", "FR_foot", "RL_foot", "RR_foot"]):
-            contact[:, i] = self._get_net_collision_forces(foot, dt=self._timestep)[:, 0, 2] > 1. #self._check_collision(foot, "groundplane")
+        contact = self._get_net_collision_forces("foots", dt=self._timestep)[:, :, 2] > 1. #self._check_collision(foot, "groundplane")
         symmetry_violations = 1 * torch.logical_and(torch.logical_not(contact[:, 0]), torch.logical_not(contact[:, 1])) \
                             + 1 * torch.logical_and(torch.logical_not(contact[:, 2]), torch.logical_not(contact[:, 3]))
         return symmetry_violations

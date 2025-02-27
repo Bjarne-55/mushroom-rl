@@ -93,6 +93,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
 
     dir = str(time.time())
     agent.save(f"stored_agents/{alg.__name__}_honey_batcher/{dir}/iteration_{0}.zip", True)
+    del dataset
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
         dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
@@ -106,6 +107,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
         tracking_reward = torch.mean(dataset.info["tracking_reward"]).item()
     
         logger.epoch_info(it + 1, J=J, R=R, entropy=E, A=A, penalities=penalities, tracking=tracking_reward)
+        del dataset
 
     #logger.info('Press a button to visualize')
     #input()
