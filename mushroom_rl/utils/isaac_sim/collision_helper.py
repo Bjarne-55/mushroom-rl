@@ -103,7 +103,7 @@ class CollisionHelper:
         assert not(self._collision_group_contains_world[group1] and self._collision_group_contains_world[group2])
         
         if selector is None:
-            selector = lambda x: self._arr_backend.max(self._arr_backend.norm(x, dim=2), dim=1)
+            selector = lambda x: self._arr_backend.max(self._arr_backend.max(self._arr_backend.norm(x, dim=3), dim=2), dim=1)
 
         if self._collision_group_contains_world[group2]:
             group = group1
@@ -111,11 +111,12 @@ class CollisionHelper:
         else:
             group = group2
             indices_prims = self._collision_groups_indices[group2][group1]
+        n_bodies = len(self.collision_groups[group])
         
         forces = self._views[group].get_contact_force_matrix(clone=False, dt=dt)
-        #transform to (num_envs, n_bodies, 3)
-        forces = forces.view(-1, self._num_envs, 3).transpose(0, 1)
-        forces = forces[:, indices_prims]
+        #transform to (num_envs, n_bodies, n_possible_partners, 3)
+        forces = forces.view(n_bodies, self._num_envs, -1, 3).transpose(0, 1)
+        forces = forces[:, :, indices_prims]
 
         return selector(forces)
     
@@ -161,10 +162,10 @@ class CollisionHelper:
             A tensor or array containing the count of collisions
         """
         if selector is None:
-            selector=lambda x: self._arr_backend.norm(x, dim=2)
+            selector=lambda x: self._arr_backend.norm(x, dim=3)
 
         forces = self.get_collision_force(group1, group2, selector, dt)
-        return self._arr_backend.sum(forces > threshold, dim=1)
+        return self._arr_backend.sum(self._arr_backend.sum(forces > threshold, dim=2), dim=1)
     
     def get_net_contact_forces(self, group, dt=1.0):
         forces = self._views[group].get_net_contact_forces(dt=dt)
