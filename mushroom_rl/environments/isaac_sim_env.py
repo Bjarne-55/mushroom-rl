@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import random
+import os
 
 from mushroom_rl.core import VectorizedEnvironment, MDPInfo, ArrayBackend
 from mushroom_rl.rl_utils.spaces import Box
@@ -120,33 +121,35 @@ class IsaacSim(VectorizedEnvironment):
         super().__init__(mdp_info, num_envs)
     
     def _create_simulation_app(self, headless):
+        app_exp_path_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "utils", "isaac_sim")
+        exp_file = os.path.join(app_exp_path_folder, "python.headless.rendering.kit")
+        print(exp_file)
         from isaacsim import SimulationApp
+        #return SimulationApp({"headless": headless, "hide_ui": False}, experience=exp_file) 
         return SimulationApp({"headless": headless, "hide_ui": False}) 
 
     def _apply_carb_settings(self):
-        """Apply Carb settings for optimization."""
-        import carb
+        """Apply settings for optimization."""
+        self._simulation_app.set_setting("/persistent/omnihydra/useSceneGraphInstancing", True)
+        self._simulation_app.set_setting("/physics/physxDispatcher", True)
 
-        carb.settings.get_settings().set("/persistent/omnihydra/useSceneGraphInstancing", True)
-        carb.settings.get_settings().set_bool("/physics/physxDispatcher", True)
-
-        carb.settings.get_settings().set_bool("/physics/disableContactProcessing", True)
-        carb.settings.get_settings().set_bool("/physics/collisionConeCustomGeometry", False)
-        carb.settings.get_settings().set_bool("/physics/collisionCylinderCustomGeometry", False)
+        self._simulation_app.set_setting("/physics/disableContactProcessing", True)
+        self._simulation_app.set_setting("/physics/collisionConeCustomGeometry", False)
+        self._simulation_app.set_setting("/physics/collisionCylinderCustomGeometry", False)
 
         #default values from IsaacLab
-        carb.settings.get_settings().set_bool("/rtx/translucency/enabled", False)
-        carb.settings.get_settings().set_bool("/rtx/reflections/enabled", False)
-        carb.settings.get_settings().set_bool("/rtx/indirectDiffuse/enabled", False)
-        carb.settings.get_settings().set_bool("/rtx-transient/dlssg/enabled", False)
-        #carb.settings.get_settings().set_bool("/rtx-transient/dldenoiser/enabled", False)
-        carb.settings.get_settings().set_int("/rtx/post/dlss/execMode", 0)
-        carb.settings.get_settings().set_bool("/rtx/directLighting/enabled", True)
-        carb.settings.get_settings().set_int(
+        self._simulation_app.set_setting("/rtx/translucency/enabled", False)
+        self._simulation_app.set_setting("/rtx/reflections/enabled", False)
+        self._simulation_app.set_setting("/rtx/indirectDiffuse/enabled", False)
+        self._simulation_app.set_setting("/rtx-transient/dlssg/enabled", False)
+        #self._simulation_app.set_setting("/rtx-transient/dldenoiser/enabled", False)
+        self._simulation_app.set_setting("/rtx/post/dlss/execMode", 0)
+        self._simulation_app.set_setting("/rtx/directLighting/enabled", True)
+        self._simulation_app.set_setting(
             "/rtx/directLighting/sampledLighting/samplesPerPixel", 1
         )
-        carb.settings.get_settings().set_bool("/rtx/shadows/enabled", True) 
-        carb.settings.get_settings().set_bool("/rtx/ambientOcclusion/enabled", False)
+        self._simulation_app.set_setting("/rtx/shadows/enabled", True) 
+        self._simulation_app.set_setting("/rtx/ambientOcclusion/enabled", False)
 
     def _create_world(self, timestep, custom_sim_params=None):
         """
@@ -156,7 +159,7 @@ class IsaacSim(VectorizedEnvironment):
             timestep (float, None): The physics timestep. the default physics timestep is used.
             custom_sim_params (dict, None): A dictionary of simulation parameters to override the default ones.
         """
-        from omni.isaac.core.world import World
+        from isaacsim.core.api import World
 
         sim_params = {
             'gravity': [0.0, 0.0, -9.81], 
@@ -189,7 +192,7 @@ class IsaacSim(VectorizedEnvironment):
 
         self._world.set_simulation_dt(rendering_dt=self.dt)
         print(f"rendering dt: {self._world.get_rendering_dt()}, physix dt: {self._world.get_physics_dt()}")
-        print(f"uses Fabric: {self._physics_context.use_fabric}, uses gpu_pipeline: {self._physics_context.use_gpu_pipeline}, use_gpu_sim: {self._physics_context.use_gpu_sim}")
+        print(f"device: {self._physics_context.device}, uses gpu_pipeline: {self._physics_context.use_gpu_pipeline}, use_gpu_sim: {self._physics_context.use_gpu_sim}")
 
     def _set_task(self, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, actuation_spec, 
                   additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target,
@@ -215,6 +218,9 @@ class IsaacSim(VectorizedEnvironment):
         """
         self._world.render()
         data = self._task.rgb_annot.get_data().numpy()[..., :3]
+
+        if data.size == 0:
+            data = np.zeros((1280, 720, 3), dtype=np.uint8)
 
         if self._viewer is None:
             self._viewer = ImageViewer((1280, 720), 0)
@@ -358,7 +364,7 @@ class IsaacSim(VectorizedEnvironment):
         Returns:
             int: The seed value that was set.
         """
-        from omni.isaac.core.utils.torch.maths import set_seed
+        from isaacsim.core.utils.torch.maths import set_seed
         return set_seed(seed)
     
     def stop(self, soft=True):

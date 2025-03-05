@@ -49,7 +49,7 @@ class CollisionHelper:
         """
         Sets up RigidContactViews for all object of all collisions groups
         """
-        from omni.isaac.core.prims import RigidContactView
+        from isaacsim.core.api.sensors import RigidContactView
 
         self._views = {}
         self._collision_groups_indices = {}

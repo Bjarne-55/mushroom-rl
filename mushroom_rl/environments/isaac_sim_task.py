@@ -1,22 +1,20 @@
 import numpy as np
 import torch
-import hydra
 import math
 
-from omni.isaac.core.tasks import BaseTask
-import omni.isaac.core.utils.prims as prim_utils
-from omni.isaac.core.articulations import ArticulationView
-from omni.isaac.cloner import GridCloner
-from omni.usd import get_context
-from pxr import UsdGeom, Gf, UsdLux
-from omni.isaac.core.prims import RigidPrimView, GeometryPrimView
-from omni.isaac.core.utils.types import ArticulationActions
-from omni.isaac.core.materials import PhysicsMaterial
+from isaacsim.core.api.tasks import BaseTask
+from isaacsim.core.utils.stage import add_reference_to_stage
+from isaacsim.core.prims import Articulation, RigidPrim, GeometryPrim
+from isaacsim.core.cloner import GridCloner
+from isaacsim.core.utils.types import ArticulationActions
+from isaacsim.core.api.materials import PhysicsMaterial
+import isaacsim.core.utils.prims as prim_utils
+
 from omni.kit.viewport.utility import get_viewport_from_window_name
 from omni.kit.viewport.utility.camera_state import ViewportCameraState
 import omni.replicator.core as rep
-
-from pxr import PhysxSchema
+from omni.usd import get_context
+from pxr import UsdGeom, Gf, UsdLux, PhysxSchema
 
 from mushroom_rl.utils.isaac_sim import ObservationType, CollisionHelper, ActionType
 from mushroom_rl.core.array_backend import ArrayBackend
@@ -48,7 +46,7 @@ class IsaacSimTask(BaseTask):
             observation_spec (list): A list containing the names of data that should be made available to the agent as
                an observation and their type (ObservationType). They are combined with a path, which is used to access the prim,
                and a list or a single string with name of the subelements of prim which should be accessed. For example a subbody 
-               or a joint of an ArticulationView
+               or a joint of an Articulation
                An entry in the list is given by: (key, name, type, element). The name can later be used to retrieve
                specific observations.
             actuation_spec (list): A list specifying the names of the joints  which should be controllable by the
@@ -155,7 +153,7 @@ class IsaacSimTask(BaseTask):
                 global_paths=["/World/groundPlane"]
             )
         
-        self.robots = ArticulationView(
+        self.robots = Articulation(
             prim_paths_expr= self.BASE_ENV_PATH + "/.*/Robot", 
             name="robot_view", 
             reset_xform_properties=False
@@ -194,13 +192,13 @@ class IsaacSimTask(BaseTask):
             if path not in self._views:
                 prim = stage.GetPrimAtPath(self.ZERO_ENV_PATH + "/Robot" + path)
                 if prim.HasAPI(PhysxSchema.PhysxArticulationAPI):
-                    view = ArticulationView(
+                    view = Articulation(
                         prim_paths_expr=self.BASE_ENV_PATH + "/.*/Robot" + path,
                         name=path.replace("/", "_") + "_view",
                         reset_xform_properties=False,
                     )
                 else:
-                    view = RigidPrimView(
+                    view = RigidPrim(
                         prim_paths_expr=self.BASE_ENV_PATH + "/.*/Robot" + path,
                         name=path.replace("/", "_") + "_view",
                         reset_xform_properties=False,
@@ -594,17 +592,17 @@ class IsaacSimTask(BaseTask):
         """
         Initializes and positions the camera in the simulation.
         """
-        viewport_api_2 = get_viewport_from_window_name("Viewport")
-        viewport_api_2.set_active_camera("/OmniverseKit_Persp")
+        viewport_api = get_viewport_from_window_name("Viewport")
+        viewport_api.set_active_camera("/OmniverseKit_Persp")
 
-        self.camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api_2)
+        self.camera_state = ViewportCameraState("/OmniverseKit_Persp", viewport_api)
         self.camera_state.set_position_world(Gf.Vec3d(self._initial_camera_pos), True)
         self.camera_state.set_target_world(Gf.Vec3d(self._initial_camera_target), True)
 
         rp = rep.create.render_product("/OmniverseKit_Persp", (1280, 720))
         self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb", do_array_copy=False, device="cuda") #, 
         self.rgb_annot.attach(rp)
-    
+
     def _create_light(self, stage, prim_path="/World/defaultDistantLight", intensity=1000):
         """Create a default light source in the scene."""
         light = UsdLux.DistantLight.Define(stage, prim_path)
@@ -633,7 +631,7 @@ class IsaacSimTask(BaseTask):
                     dynamic_friction=dynamic_friction,
                     restitution=restitution
                 )
-            view = GeometryPrimView(self.prim_paths[i] + "/Robot", reset_xform_properties=False)
+            view = GeometryPrim(self.prim_paths[i] + "/Robot", reset_xform_properties=False)
             view.apply_physics_materials(materials[name])
     @property
     def _arr_backend(self):
