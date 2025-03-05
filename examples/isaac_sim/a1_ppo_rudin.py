@@ -94,7 +94,6 @@ def experiment(mdp, alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episode
 
     logger.epoch_info(0, J=J, R=R, entropy=E, V=V, A=A)
     """
-
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
         #dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
@@ -111,6 +110,8 @@ def experiment(mdp, alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episode
 
         logger.epoch_info(it+1, J=J, R=R, entropy=E, V=V, A=A)
         agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
+
+        del dataset
 
     #logger.info('Press a button to visualize')
     #input()

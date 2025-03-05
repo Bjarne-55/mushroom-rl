@@ -110,8 +110,8 @@ class IsaacA1Description(IsaacSim):
         self._obs = None
     
     def _import_helper_functions(self):
-        from omni.isaac.core.utils.torch.rotations import quat_apply, quat_rotate_inverse
-        from omni.isaac.core.utils.torch.maths import torch_rand_float
+        from isaacsim.core.utils.torch.rotations import quat_apply, quat_rotate_inverse
+        from isaacsim.core.utils.torch.maths import torch_rand_float
         self.quat_apply = quat_apply
         self.quat_rotate_inverse = quat_rotate_inverse
         self.torch_rand_float = torch_rand_float
