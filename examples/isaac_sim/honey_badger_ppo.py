@@ -132,5 +132,5 @@ if __name__ == '__main__':
         ent_coeff=0.01
     )
     num_envs = 4096
-    experiment(alg=NikitaPPO, num_envs=num_envs, n_epochs=10, n_steps=4096*24*50*15, n_steps_per_fit=4096*24,
+    experiment(alg=NikitaPPO, num_envs=num_envs, n_epochs=40, n_steps=4096*24*50*3, n_steps_per_fit=4096*24,
                    n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params)
