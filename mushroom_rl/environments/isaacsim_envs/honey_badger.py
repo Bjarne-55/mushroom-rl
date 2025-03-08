@@ -146,8 +146,8 @@ class HoneyBadger(IsaacSim):
         self._evaluate = False
     
     def _import_helper_functions(self):
-        from omni.isaac.core.utils.torch.rotations import quat_apply, quat_rotate_inverse, get_euler_xyz
-        from omni.isaac.core.utils.torch.maths import torch_rand_float
+        from isaacsim.core.utils.torch.rotations import quat_apply, quat_rotate_inverse, get_euler_xyz
+        from isaacsim.core.utils.torch.maths import torch_rand_float
         self.quat_apply = quat_apply
         self.quat_rotate_inverse = quat_rotate_inverse
         self.torch_rand_float = torch_rand_float
@@ -338,13 +338,17 @@ class HoneyBadger(IsaacSim):
         self.step_counter += 1
 
         #resample commands and calculate yaw command
-        env_ids = (self.episode_length % int(10. / self.dt)==0).nonzero(as_tuple=False).flatten()
+        do_resample = self.torch_rand_float(0., 1., (len(env_indices), 1), device=self._device).squeeze(-1) < (1./500.)
+        do_resample *= self.episode_length[env_indices] > 50
+        env_ids = env_indices[do_resample]
         self._resample_commands(env_ids)
 
         #domain randomization: push Robot
-        push_interval = np.ceil(15 / self.dt) + 1
-        if self.domain_randomization and (self.step_counter % push_interval == 0):
-            self._push_robots(env_indices)
+        do_push = self.torch_rand_float(0., 1., (len(env_indices), 1), device=self._device).squeeze(-1) < (1./750.)
+        do_push_ids = env_indices[do_push]
+        do_push_ids = do_push_ids[self.episode_length[do_push_ids] > 50]
+        if self.domain_randomization:
+            self._push_robots(do_push_ids)
 
         if self.domain_randomization and self.np_rng.uniform() < 0.002:
             self.current_mixed = self.np_rng.uniform() < self.MIXED_CHANCE
@@ -360,12 +364,6 @@ class HoneyBadger(IsaacSim):
 
             dof_vel_indices = self.observation_helper.obs_idx_map["joint_vel"]
             obs[self._setup_env_indices.unsqueeze(1), dof_vel_indices] = self._setup_dof_vel
-
-            #lin_vel_indices = self.observation_helper.obs_idx_map["base_lin_vel"]
-            #obs[self._setup_env_indices.unsqueeze(1), lin_vel_indices] = self._setup_body_vel[:, :3]
-
-            #ang_vel_indices = self.observation_helper.obs_idx_map["base_ang_vel"]
-            #obs[self._setup_env_indices.unsqueeze(1), ang_vel_indices] = self._setup_body_vel[:, 3:]
 
             self._setup_env_indices = None
 
@@ -573,7 +571,7 @@ class HoneyBadger(IsaacSim):
             joint_damping_min=0.0, joint_damping_max=0.3,
             joint_armature_min=0.009, joint_armature_max=0.023,
             joint_stiffness_min=0.0, joint_stiffness_max=0.5,
-            joint_friction_loss_min=0.0, joint_friction_loss_max=1.0,
+            joint_friction_loss_min=0.0, joint_friction_loss_max=0.1,
             add_p_gain_min=-3.0, add_p_gain_max=3.0,
             add_d_gain_min=-0.1, add_d_gain_max=0.1,  
             add_scaling_factor_min=-0.03, add_scaling_factor_max=0.03,  
@@ -621,7 +619,6 @@ class HoneyBadger(IsaacSim):
         #joint range
         #TODO can't do that
 
-        """
         stay_at_default_mask = torch_rand_float(0, 1, (n_envs, ), self._device) < stay_at_default_percentage
         stay_at_default_idx = env_indices[stay_at_default_mask]
         self._seen_joint_damping[stay_at_default_idx] = self._default_joint_damping
@@ -641,7 +638,6 @@ class HoneyBadger(IsaacSim):
         self._write_data("joint_stiffness", self._seen_joint_stiffness[env_indices] * self._nf_joint_stiffness[env_indices], env_indices, True)
         self._write_data("joint_armature", self._seen_joint_armature[env_indices] * self._nf_joint_armature[env_indices], env_indices, True)
         self._write_data("joint_frictionloss", self._seen_joint_frictionloss[env_indices] * self._nf_joint_friction[env_indices], env_indices, True)
-        """
 
         #used for control function
         self._seen_p_gain[env_indices] = 20 + torch_rand_float(add_p_gain_min, add_p_gain_max, (n_envs, self.NUM_DOFS), self._device)

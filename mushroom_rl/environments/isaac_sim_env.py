@@ -121,11 +121,7 @@ class IsaacSim(VectorizedEnvironment):
         super().__init__(mdp_info, num_envs)
     
     def _create_simulation_app(self, headless):
-        app_exp_path_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "utils", "isaac_sim")
-        exp_file = os.path.join(app_exp_path_folder, "python.headless.rendering.kit")
-        print(exp_file)
         from isaacsim import SimulationApp
-        #return SimulationApp({"headless": headless, "hide_ui": False}, experience=exp_file) 
         return SimulationApp({"headless": headless, "hide_ui": False}) 
 
     def _apply_carb_settings(self):

@@ -11,6 +11,7 @@ import time
 
 from mushroom_rl.core import VectorCore, Logger
 from mushroom_rl.algorithms.actor_critic import TRPO, PPO
+from mushroom_rl.algorithms.actor_critic.deep_actor_critic.ppo_nikita import NikitaPPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
 from mushroom_rl.environments.isaacsim_envs.honey_badger import HoneyBadger
@@ -54,19 +55,19 @@ class Network(nn.Module):
 def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
                alg_params, policy_params, seed):
 
-    logger = Logger(alg.__name__ + "_1_legged_gym", results_dir="./logs/", log_console=True, use_timestamp=True)
+    logger = Logger(alg.__name__ + "_honey_batcher", results_dir="./logs/", log_console=True, use_timestamp=True)
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = HoneyBadger(num_envs, 1000, True, False)
+    mdp = HoneyBadger(num_envs, 1000, True, True)
     mdp.seed(seed)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
-                                    'params': {'lr': 1e-4}},
+                                    'params': {'lr': 3e-4}},
                          loss=F.mse_loss,
                          n_features=[512, 256, 128],
-                         batch_size=int((4096*24) / 4),
+                         batch_size=int((4096*24) / 32),
                          use_cuda=True,
                          input_shape=mdp.info.observation_space.shape,
                          output_shape=(1,))
@@ -88,6 +89,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     Rs = []
     Es = []
     Vs = []
+    As = []
     INFOs = []
 
     dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
@@ -96,27 +98,30 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     R = torch.mean(dataset.undiscounted_return.to("cpu")).item()
     E = agent.policy.entropy().to("cpu").item()
     V = torch.mean(agent._V(dataset.get_init_states())).detach().to("cpu").item()
+    A = dataset.absorbing.sum().to("cpu").item()
     INFO = {key: torch.mean(value).to("cpu").item() for key, value in dataset.info.items()}
     Js.append(J)
     Rs.append(R)
     Es.append(E)
     Vs.append(V)
+    As.append(A)
     INFOs.append(INFO)
 
     logger.epoch_info(0, J=J, R=R, entropy=E, V=V)
 
     for it in trange(n_epochs, leave=False):
         core.learn(n_steps=n_steps, n_steps_per_fit=n_steps_per_fit)
-        if it % 5 == 0:
+        if (it + 1) % 10 == 0 or it == n_epochs - 1:
             dataset = core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
         else:
             dataset = core.evaluate(n_episodes=n_episodes_test, render=False, record=False)
-        agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
+        agent.save(f"stored_agents/{alg.__name__}_honey_batcher/{dir}/iteration_{it}.zip", True)
 
         J = torch.mean(dataset.discounted_return).to("cpu").item()
         R = torch.mean(dataset.undiscounted_return).to("cpu").item()
         E = agent.policy.entropy().to("cpu").item()
         V = torch.mean(agent._V(dataset.get_init_states())).detach().to("cpu").item()
+        A = dataset.absorbing.sum().to("cpu").item()
         INFO = {key: torch.mean(value).to("cpu").item() for key, value in dataset.info.items()}
         Js.append(J)
         Rs.append(R)
@@ -124,14 +129,15 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
         Vs.append(V)
         INFOs.append(INFO)
 
-        logger.epoch_info(it+1, J=J, R=R, entropy=E, V=V)
+        logger.epoch_info(it+1, J=J, R=R, entropy=E, V=V, A=A)
+        del dataset
 
     #logger.info('Press a button to visualize')
     #input()
     #core.evaluate(n_episodes=n_episodes_test, render=True, record=True)
     #agent.save(f"stored_agents/a1_ppo/{str(time.time())}.zip", True)
 
-    return Js, Rs, Es, Vs, INFOs
+    return Js, Rs, Es, Vs, As, INFOs
 
 def create_plot(data, directory, name, title):
     fig, ax = plt.subplots()
@@ -144,11 +150,12 @@ if __name__ == '__main__':
     TorchUtils.set_default_device('cuda:0')
     ppo_params = dict(
         actor_optimizer={'class': optim.Adam,
-        'params': {'lr': 1e-4}},#changed from 1e-3
+        'params': {'lr': 3e-4}},#changed from 1e-3
         n_epochs_policy=5,
-        batch_size=int((4096*24) / 4),
+        batch_size=int((4096*24) / 32),
         eps_ppo=.2,
-        lam=.95
+        lam=.95,
+        ent_coeff=0.00
     )
     policy_params = dict(
         std_0=1.,
@@ -159,8 +166,8 @@ if __name__ == '__main__':
     num_envs = 4096
 
     seed = np.random.randint(0, 10000)
-    Js, Rs, Es, Vs, INFOs = experiment(alg=PPO, num_envs=num_envs, n_epochs=10, n_steps=4096*24*200, n_steps_per_fit=4096*24,
-                   n_episodes_test=128, alg_params=ppo_params, policy_params=policy_params, seed=seed)
+    Js, Rs, Es, Vs, As, INFOs = experiment(alg=NikitaPPO, num_envs=num_envs, n_epochs=30, n_steps=4096*24*50*2, n_steps_per_fit=4096*24,
+                   n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params, seed=seed)
     
     dir = "plots/a1_effort_ppo/" + str(time.time())
     os.makedirs(dir)
@@ -168,6 +175,7 @@ if __name__ == '__main__':
     create_plot([Rs], dir, "R", f"PPO - undiscounted Return: {seed}")
     create_plot([Es], dir, "E", f"PPO - Entropy: {seed}")
     create_plot([Vs], dir, "V", f"PPO - value of intial states: {seed}")
+    create_plot([As], dir, "A", f"PPO - absorbing: {seed}")
     for key in INFOs[0]:
         lst_info = []
         for epi_info in INFOs:
