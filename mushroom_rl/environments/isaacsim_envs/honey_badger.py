@@ -15,7 +15,7 @@ class HoneyBadger(IsaacSim):
     Implements the learning environment for the robot Honey Badger
     Honey Badger is a Robot from MAB Robotics: https://www.mabrobotics.pl/
     """
-    def __init__(self, num_envs, horizon, headless, domain_randomization):
+    def __init__(self, num_envs, horizon, headless, domain_randomization, camera_pos=(105, 0, 4), camera_target=(95, 0, 0)):
         self.NUM_DOFS = 12
 
         backend="torch"
@@ -101,8 +101,8 @@ class HoneyBadger(IsaacSim):
         IsaacSim.__init__(self, usd_path, self._action_spec, observation_spec, backend, device, collision_between_envs, num_envs, 
                          env_spacing, 0.99, horizon, additional_data_spec=additional_data_spec, collision_groups=collision_groups, 
                          action_type=ActionType.EFFORT, headless=headless, n_intermediate_steps=4, n_substeps=1, timestep=0.005, 
-                         physics_material_spec=physics_material_spec, sim_params=sim_params, camera_position=(105, 0, 4), 
-                         camera_target=(95, 0, 0), solver_pos_it_count=solver_pos, solver_vel_it_count=solver_vel) 
+                         physics_material_spec=physics_material_spec, sim_params=sim_params, camera_position=camera_pos, 
+                         camera_target=camera_target, solver_pos_it_count=solver_pos, solver_vel_it_count=solver_vel) 
         self._import_helper_functions()
         self._init_domain_randomization_parameters()
         action_limit = (self._task.get_joint_pos_limits() - self._default_joint_angles) / 0.25

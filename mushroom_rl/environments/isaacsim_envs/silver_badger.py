@@ -12,7 +12,7 @@ class SilverBadger(HoneyBadger):
     Implements the learning environment for the robot Silver Badger
     Silver Badger is a Robot from MAB Robotics: https://www.mabrobotics.pl/
     """
-    def __init__(self, num_envs, horizon, headless):
+    def __init__(self, num_envs, horizon, headless, camera_pos=(105, 0, 4), camera_target=(95, 0, 0)):
         self.NUM_DOFS = 13
         
         backend="torch"
@@ -92,7 +92,7 @@ class SilverBadger(HoneyBadger):
         IsaacSim.__init__(self, usd_path, self._action_spec, observation_spec, backend, device, collision_between_envs, num_envs, 
                          env_spacing, 0.99, horizon, additional_data_spec=additional_data_spec, collision_groups=collision_groups, 
                          action_type=ActionType.EFFORT, headless=headless, n_intermediate_steps=4, timestep=0.005,
-                         physics_material_spec=physics_material_spec) 
+                         physics_material_spec=physics_material_spec, camera_position=camera_pos, camera_target=camera_target) 
         self._mdp_info.action_space = Box(*((self._task.get_joint_pos_limits() - self._default_joint_angles) / 0.25))
         
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)
