@@ -5,6 +5,7 @@ from mushroom_rl.rl_utils.spaces import Box
 
 import numpy as np
 import torch
+from pathlib import Path
 
 def torch_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(*shape, device=device) + lower
@@ -21,7 +22,7 @@ class HoneyBadger(IsaacSim):
         device="cuda:0"
         self.domain_randomization = domain_randomization
 
-        usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/honey_badger_2/honey_badger/honey_badger.usd"
+        usd_path = str(Path(__file__).resolve().parent / "robots_usds/honey_badger/honey_badger.usd")
 
         self._action_spec = [
             "fl_j0", "fl_j1", "fl_j2",

@@ -5,17 +5,20 @@ from mushroom_rl.rl_utils.spaces import Box
 
 import numpy as np
 import torch
-
+from pathlib import Path
 
 class SilverBadger(HoneyBadger):
-
+    """
+    Implements the learning environment for the robot Silver Badger
+    Silver Badger is a Robot from MAB Robotics: https://www.mabrobotics.pl/
+    """
     def __init__(self, num_envs, horizon, headless):
         self.NUM_DOFS = 13
         
         backend="torch"
         device="cuda:0"
 
-        usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/silver_badger/silver_badger.usd"
+        usd_path = str(Path(__file__).resolve().parent / "robots_usds/silver_badger/silver_badger.usd")
 
         self._action_spec = [
             "fl_j0", "fl_j1", "fl_j2",
