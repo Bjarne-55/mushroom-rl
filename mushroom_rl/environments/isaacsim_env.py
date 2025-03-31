@@ -5,7 +5,7 @@ from mushroom_rl.core import VectorizedEnvironment, MDPInfo, ArrayBackend
 from mushroom_rl.rl_utils.spaces import Box
 from mushroom_rl.utils import TorchUtils
 from mushroom_rl.utils.viewer import ImageViewer
-from mushroom_rl.utils.isaac_sim import ObservationHelper, ObservationType, ActionType
+from mushroom_rl.utils.isaac_sim import ObservationHelper, ActionType
 
 class IsaacSim(VectorizedEnvironment):
     """
@@ -123,110 +123,6 @@ class IsaacSim(VectorizedEnvironment):
         
         super().__init__(mdp_info, num_envs)
     
-    def _create_simulation_app(self, headless):
-        from isaacsim import SimulationApp
-        return SimulationApp({"headless": headless, "hide_ui": False}) 
-
-    def _apply_carb_settings(self):
-        """Apply settings for optimization."""
-        self._simulation_app.set_setting("/persistent/omnihydra/useSceneGraphInstancing", True)
-        self._simulation_app.set_setting("/physics/physxDispatcher", True)
-
-        self._simulation_app.set_setting("/physics/disableContactProcessing", True)
-        self._simulation_app.set_setting("/physics/collisionConeCustomGeometry", False)
-        self._simulation_app.set_setting("/physics/collisionCylinderCustomGeometry", False)
-
-        #default values from IsaacLab
-        self._simulation_app.set_setting("/rtx/translucency/enabled", False)
-        self._simulation_app.set_setting("/rtx/reflections/enabled", False)
-        self._simulation_app.set_setting("/rtx/indirectDiffuse/enabled", False)
-        self._simulation_app.set_setting("/rtx-transient/dlssg/enabled", False)
-        #self._simulation_app.set_setting("/rtx-transient/dldenoiser/enabled", False)
-        self._simulation_app.set_setting("/rtx/directLighting/enabled", True)
-        self._simulation_app.set_setting(
-            "/rtx/directLighting/sampledLighting/samplesPerPixel", 1
-        )
-        self._simulation_app.set_setting("/rtx/shadows/enabled", True) 
-        self._simulation_app.set_setting("/rtx/ambientOcclusion/enabled", False)
-
-    def _create_world(self, timestep, custom_sim_params=None):
-        """
-        Create and configure the simulation world.
-
-        Args:
-            timestep (float, None): The physics timestep. the default physics timestep is used.
-            custom_sim_params (dict, None): A dictionary of simulation parameters to override the default ones.
-        """
-        from isaacsim.core.api import World
-
-        sim_params = {
-            'gravity': [0.0, 0.0, -9.81], 
-            'use_gpu_pipeline': True, 
-            'use_fabric': True, 
-            'enable_scene_query_support': False, 
-            'use_gpu': True,
-            'disable_contact_processing': True
-        }
-        if custom_sim_params is not None:
-            sim_params.update(custom_sim_params)
-
-        self._world = World(
-            stage_units_in_meters=1.0,
-            rendering_dt=1.0 / 60.0,
-            backend=self._backend,
-            device=self._device,
-            sim_params=sim_params
-        )
-        self._physics_context = self._world.get_physics_context()
-        self._physics_context.enable_gpu_dynamics(True)
-        self._physics_context.enable_ccd(False)
-
-        if timestep is None:
-            self._timestep = self._world.get_physics_dt()
-            self._physics_context.set_physics_dt(dt=self._timestep * self._n_substeps, substeps=self._n_substeps)
-        else:
-            self._physics_context.set_physics_dt(dt=timestep * self._n_substeps, substeps=self._n_substeps)
-            self._timestep = timestep
-
-        self._world.set_simulation_dt(rendering_dt=self.dt)
-        print(f"rendering dt: {self._world.get_rendering_dt()}, physix dt: {self._world.get_physics_dt()}")
-        print(f"device: {self._physics_context.device}, uses gpu_pipeline: {self._physics_context.use_gpu_pipeline}, use_gpu_sim: {self._physics_context.use_gpu_sim}")
-
-    def _set_task(self, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, actuation_spec, 
-                  additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target,
-                  solver_pos_it_count, solver_vel_it_count, ground_plane_friction):
-        """Set up the simulation task."""
-        from mushroom_rl.environments.isaac_sim_task import IsaacSimTask
-
-        self._task = IsaacSimTask(
-            self._physics_context, usd_path, num_envs, env_spacing, observation_spec, actuation_spec, 
-            self._backend, self._device, self._action_type, self._n_intermediate_steps, collision_between_envs, 
-            additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target,
-            solver_pos_it_count, solver_vel_it_count, ground_plane_friction, self._rp_size
-        )
-        self._world.add_task(self._task)
-
-    def render_all(self, env_mask, record=False):
-        """
-        Render all environments. Optionally record the frames.
-
-        Args:
-            record (bool): If True, the function returns the rendered image data.
-                Defaults to False.
-        """
-        self._world.render()
-        data = self._task.rgb_annot.get_data().numpy()[..., :3]
-
-        if data.size == 0:
-            data = np.zeros((self._rp_size[1], self._rp_size[0], 3), dtype=np.uint8) #must be Height, Width, rgb
-
-        if self._viewer is None:
-            self._viewer = ImageViewer(self._rp_size, 0)
-        self._viewer.display(data)
-
-        if record:
-            return data
-
     def step_all(self, env_mask, action):
         """
         Performs a simulation step for all active environments.
@@ -312,6 +208,27 @@ class IsaacSim(VectorizedEnvironment):
         obs = self._modify_observation(obs)
 
         return obs.clone().detach(), info
+    
+    def render_all(self, env_mask, record=False):
+        """
+        Render all environments. Optionally record the frames.
+
+        Args:
+            record (bool): If True, the function returns the rendered image data.
+                Defaults to False.
+        """
+        self._world.render()
+        data = self._task.rgb_annot.get_data().numpy()[..., :3]
+
+        if data.size == 0:
+            data = np.zeros((self._rp_size[1], self._rp_size[0], 3), dtype=np.uint8) #must be Height, Width, rgb
+
+        if self._viewer is None:
+            self._viewer = ImageViewer(self._rp_size, 0)
+        self._viewer.display(data)
+
+        if record:
+            return data
     
     def reward(self, obs, action, next_obs, absorbing):
         """
@@ -400,6 +317,116 @@ class IsaacSim(VectorizedEnvironment):
     def render_product_size(self):
         return self._rp_size
     
+
+    def _read_data(self, name, env_indices=None):
+        """
+        Read data from isaac sim.
+
+        Args: 
+            name (str): A name referring to an entry contained in additional_data_spec or observation_spec.
+
+        Returns:
+            The desired data as a tensor or array.
+        """
+        return self._task.read_data(name, env_indices)
+
+    def _write_data(self, name, value, env_indices=None, reapply_after_reset=False):
+        """
+        Writes data to isaac sim.
+
+        Args: 
+            name (str): A name referring to an entry contained in additional_data_spec or observation_spec.
+            value (torch.tensor, np.ndarra): The data that should be written.
+            reapply_after_reset (bool): Whether the written property should be reapplied after a world reset. 
+                Defaults to False.
+        """
+        self._task.write_data(name, value, env_indices, reapply_after_reset)
+
+    def _create_simulation_app(self, headless):
+        """Starts IsaacSim."""
+        from isaacsim import SimulationApp
+        return SimulationApp({"headless": headless, "hide_ui": False}) 
+
+    def _apply_carb_settings(self):
+        """Apply settings for optimization."""
+        self._simulation_app.set_setting("/persistent/omnihydra/useSceneGraphInstancing", True)
+        self._simulation_app.set_setting("/physics/physxDispatcher", True)
+
+        self._simulation_app.set_setting("/physics/disableContactProcessing", True)
+        self._simulation_app.set_setting("/physics/collisionConeCustomGeometry", False)
+        self._simulation_app.set_setting("/physics/collisionCylinderCustomGeometry", False)
+
+        #default values from IsaacLab
+        self._simulation_app.set_setting("/rtx/translucency/enabled", False)
+        self._simulation_app.set_setting("/rtx/reflections/enabled", False)
+        self._simulation_app.set_setting("/rtx/indirectDiffuse/enabled", False)
+        self._simulation_app.set_setting("/rtx-transient/dlssg/enabled", False)
+        self._simulation_app.set_setting("/rtx/directLighting/enabled", True)
+        self._simulation_app.set_setting(
+            "/rtx/directLighting/sampledLighting/samplesPerPixel", 1
+        )
+        self._simulation_app.set_setting("/rtx/shadows/enabled", True) 
+        self._simulation_app.set_setting("/rtx/ambientOcclusion/enabled", False)
+
+    def _create_world(self, timestep, custom_sim_params=None):
+        """
+        Create and configure the simulation world.
+
+        Args:
+            timestep (float, None): The physics timestep. the default physics timestep is used.
+            custom_sim_params (dict, None): A dictionary of simulation parameters to override the default ones.
+        """
+        from isaacsim.core.api import World
+
+        sim_params = {
+            'gravity': [0.0, 0.0, -9.81], 
+            'use_gpu_pipeline': True, 
+            'use_fabric': True, 
+            'enable_scene_query_support': False, 
+            'use_gpu': True,
+            'disable_contact_processing': True
+        }
+        if custom_sim_params is not None:
+            sim_params.update(custom_sim_params)
+
+        self._world = World(
+            stage_units_in_meters=1.0,
+            rendering_dt=1.0 / 60.0,
+            backend=self._backend,
+            device=self._device,
+            sim_params=sim_params
+        )
+        self._physics_context = self._world.get_physics_context()
+        self._physics_context.enable_gpu_dynamics(True)
+        self._physics_context.enable_ccd(False)
+
+        if timestep is None:
+            self._timestep = self._world.get_physics_dt()
+            self._physics_context.set_physics_dt(dt=self._timestep * self._n_substeps, substeps=self._n_substeps)
+        else:
+            self._physics_context.set_physics_dt(dt=timestep * self._n_substeps, substeps=self._n_substeps)
+            self._timestep = timestep
+
+        self._world.set_simulation_dt(rendering_dt=self.dt)
+        print(f"rendering dt: {self._world.get_rendering_dt()}, physix dt: {self._world.get_physics_dt()}")
+        print(f"device: {self._physics_context.device}, uses gpu_pipeline: {self._physics_context.use_gpu_pipeline}, use_gpu_sim: {self._physics_context.use_gpu_sim}")
+
+    def _set_task(self, usd_path, num_envs, env_spacing, collision_between_envs, observation_spec, actuation_spec, 
+                  additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target,
+                  solver_pos_it_count, solver_vel_it_count, ground_plane_friction):
+        """Set up the simulation task."""
+        from mushroom_rl.utils.isaac_sim.general_task import GeneralTask
+
+        self._task = GeneralTask(
+            self._physics_context, usd_path, num_envs, env_spacing, observation_spec, actuation_spec, 
+            self._backend, self._device, self._action_type, self._n_intermediate_steps, collision_between_envs, 
+            additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target,
+            solver_pos_it_count, solver_vel_it_count, ground_plane_friction, self._rp_size
+        )
+        self._world.add_task(self._task)
+
+    # collision detection --------------------------------------------------------------------------
+    
     def _check_collision(self, group1, group2, threshold=0., selector=None, dt=1.):
         """
         Checks whether the collision force between two collision groups exceeds a given threshold.
@@ -471,48 +498,16 @@ class IsaacSim(VectorizedEnvironment):
             return self._task.collision_helper.count_collisions(group1, group2, threshold, dt=dt)
         
     def _get_net_collision_forces(self, group, dt=1.):
-        return self._task.collision_helper.get_net_contact_forces(group, dt)
-    
-    def _read_data(self, name, env_indices=None):
         """
-        Read data from isaac sim.
-
-        Args: 
-            name (str): A name referring to an entry contained in additional_data_spec or observation_spec.
-
-        Returns:
-            The desired data as a tensor or array.
-        """
-        return self._task.read_data(name, env_indices)
-
-    def _write_data(self, name, value, env_indices=None, reapply_after_reset=False):
-        """
-        Writes data to isaac sim.
-
-        Args: 
-            name (str): A name referring to an entry contained in additional_data_spec or observation_spec.
-            value (torch.tensor, np.ndarra): The data that should be written.
-            reapply_after_reset (bool): Whether the written property should be reapplied after a world reset. 
-                Defaults to False.
-        """
-        self._task.write_data(name, value, env_indices, reapply_after_reset)
-
-    def _set_joint_data(self, value, type, joint_indices=None, env_indices=None):
-        """
-        Sets the joint properties for the specified joints and environments.
+        Returns the net contact forces for all objects in a collision group (simliar to a pressure sensor)
 
         Args:
-            value (torch.tensor, np.ndarray): The value to set for the specified joint property.
-            type (ObservationType): The type of joint property to be set (e.g., "position", "velocity").
-            joint_indices (torch.tensor, np.ndarray, list[int], optional): The indices of the joints to update.
-                If None, defaults to the controlled joints.
-            env_indices (torch.tensor, np.ndarray, list[int], optional): The indices of the environments where
-                the joint data should be updated. If None, applies to all environments.
+            group (str): The name of the collision group.
+            dt (float, optional): The time step duration used for computing forces. Defaults to 1.0.
         """
-        assert type == ObservationType.JOINT_POS or type == ObservationType.JOINT_VEL
-        self._task.set_joint_data(value, type, joint_indices, env_indices)
+        return self._task.collision_helper.get_net_contact_forces(group, dt)
 
-    # callbacks ------------------------------------------------------------------------------------------
+    # overwritable functions ----------------------------------------------------------------------------------------
 
     def _create_observation(self, obs):
         """

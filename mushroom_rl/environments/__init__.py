@@ -78,7 +78,7 @@ except ImportError:
 """
 try:
     IsaacSim = None
-    from .isaac_sim_env import IsaacSim
+    from .isaacsim_env import IsaacSim
 except ImportError:
     pass
 
