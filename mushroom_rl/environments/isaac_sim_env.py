@@ -1,7 +1,5 @@
 import numpy as np
-import torch
-import random
-import os
+import sys
 
 from mushroom_rl.core import VectorizedEnvironment, MDPInfo, ArrayBackend
 from mushroom_rl.rl_utils.spaces import Box
@@ -68,12 +66,14 @@ class IsaacSim(VectorizedEnvironment):
             ground_plane_friction (tuple, None): A tuple containing the static friciton, dynamic friction and restitution 
                 for the groundplane. The tuple should have the following format: (static_friction, dynamic_friction, restitution)
         """
-        
         self._headless = headless
         self._simulation_app = self._create_simulation_app(headless)
         self._viewer = None
 
         self._apply_carb_settings()
+
+        # Isaac Sim overrides sys.stderr, which breaks tqdm — restore the original
+        sys.stderr = sys.__stderr__
 
         self._backend = backend
         self._device = device
@@ -139,7 +139,6 @@ class IsaacSim(VectorizedEnvironment):
         self._simulation_app.set_setting("/rtx/indirectDiffuse/enabled", False)
         self._simulation_app.set_setting("/rtx-transient/dlssg/enabled", False)
         #self._simulation_app.set_setting("/rtx-transient/dldenoiser/enabled", False)
-        self._simulation_app.set_setting("/rtx/post/dlss/execMode", 0)
         self._simulation_app.set_setting("/rtx/directLighting/enabled", True)
         self._simulation_app.set_setting(
             "/rtx/directLighting/sampledLighting/samplesPerPixel", 1
@@ -216,7 +215,7 @@ class IsaacSim(VectorizedEnvironment):
         data = self._task.rgb_annot.get_data().numpy()[..., :3]
 
         if data.size == 0:
-            data = np.zeros((1280, 720, 3), dtype=np.uint8)
+            data = np.zeros((720, 1280, 3), dtype=np.uint8)
 
         if self._viewer is None:
             self._viewer = ImageViewer((1280, 720), 0)
