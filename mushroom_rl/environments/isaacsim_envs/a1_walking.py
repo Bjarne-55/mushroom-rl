@@ -1,13 +1,17 @@
 from mushroom_rl.environments import IsaacSim
-from mushroom_rl.environments.isaac_sim_env import ActionType #TODO
-from mushroom_rl.utils.isaac_sim import ObservationType
+from mushroom_rl.utils.isaac_sim import ObservationType, ActionType
 import numpy as np
 import torch
-import random
 from mushroom_rl.rl_utils.spaces import Box
 from pathlib import Path
 
-class IsaacA1Description(IsaacSim):
+class A1Walking(IsaacSim):
+    """
+    A learning environment for training the A1 quadroped to walk. 
+    
+    Resembles environment implemented by Rudin et al. for 
+    "Learning to Walk in Minutes Using Massively Parallel Deep Reinforcement Learning"
+    """
     def __init__(self, num_envs, horizon, headless, domain_randomization=True, camera_position=(105, 0, 4), camera_target=(95, 0, 0)):
         usd_path = str(Path(__file__).resolve().parent / "robots_usds/a1/a1.usd")
         self.NUM_DOFS = 12
@@ -40,16 +44,15 @@ class IsaacA1Description(IsaacSim):
             ("body_rot", "", ObservationType.BODY_ROT, None), 
             ("body_vel", "", ObservationType.BODY_VEL, None)
         ]
-        """
-        collision_groups = [
-            ("foots", ["/FL_foot", "/FR_foot", "/RL_foot", "/RR_foot"]), 
-            ("body", ["/trunk"]),
-            ("lower_body", ["/FL_thigh", "/FR_thigh", "/RL_thigh", "/RR_thigh", "/FL_calf", "/FR_calf", "/RL_calf", "/RR_calf"])
-        ]
-        """
+
+        #one collision group is faster, of course it would be cleaner with 3 (feet, body, lower_body)
         collision_groups = [
             ("body", ["/trunk", "/FL_foot", "/FR_foot", "/RL_foot", "/RR_foot", "/FL_thigh", "/FR_thigh", "/RL_thigh", "/RR_thigh", "/FL_calf", "/FR_calf", "/RL_calf", "/RR_calf"]),
         ]
+        self._trunk_idx = 0
+        self._feet_ids = slice(1, 5)
+        self._lower_bodies_ids = slice(5, None)
+
         collision_between_envs = False
         env_spacing = 3.
         physics_material_spec = self._get_values_for_physics_materials(num_envs) if domain_randomization else None
@@ -68,46 +71,43 @@ class IsaacA1Description(IsaacSim):
                          physics_material_spec=physics_material_spec, sim_params=sim_params, camera_position=camera_position, 
                          camera_target=camera_target, solver_pos_it_count=solver_pos, solver_vel_it_count=solver_vel) 
         self._import_helper_functions()
+        
+        #update action space
         action_limits = (self._task.get_joint_pos_limits() - self._default_joint_angles) / 0.25
         self._mdp_info.action_space = Box(*action_limits, data_type=action_limits[0].dtype)
         
+        #register custom observations
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)
         commands_upper = torch.tensor([1., 1., np.pi], device=device)
         self.observation_helper.add_obs("commands", 3, -commands_upper, commands_upper)
         self.observation_helper.add_obs("actions", self.NUM_DOFS, self.info.action_space.low, self.info.action_space.high)
 
-        self.normalization_obs_vec = self._get_obs_normilization_vec()
-        self.noise_scale_vec = self._get_noise_scale_vec()
+        #get normalization and noise vector
+        self._normalization_obs_vec = self._get_obs_normilization_vec()
+        self._noise_scale_vec = self._get_noise_scale_vec()
+        self._soft_dof_pos_limits = self._get_soft_dof_pos_limit()
 
+        #update observation space
         obs_low, obs_high = self.observation_helper.obs_limits
         dof_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
         obs_low[dof_pos_indices] -= self._default_joint_angles
         obs_high[dof_pos_indices] -= self._default_joint_angles
-        new_obs_low = obs_low * self.normalization_obs_vec - self.noise_scale_vec
-        new_obs_high = obs_high * self.normalization_obs_vec + self.noise_scale_vec
+        new_obs_low = obs_low * self._normalization_obs_vec - self._noise_scale_vec
+        new_obs_high = obs_high * self._normalization_obs_vec + self._noise_scale_vec
         self._mdp_info.observation_space = Box(new_obs_low, new_obs_high, data_type=new_obs_high.dtype)
 
-        self.commands = torch.zeros(num_envs, 4, dtype=torch.float, device=device)
-
-        self._soft_dof_pos_limits = self._get_soft_dof_pos_limit()
-        
+        self._commands = torch.zeros(num_envs, 4, dtype=torch.float, device=device)
         self._actions = torch.zeros((num_envs, self.NUM_DOFS), device=device)
+        self._feet_air_time = torch.zeros((num_envs, 4), device=device)
+        self._last_actions =  torch.zeros((num_envs, self.NUM_DOFS), device=device)
+        self._last_dof_vel = torch.zeros((num_envs, self.NUM_DOFS), device=device)
+        self._last_contacts = torch.zeros((num_envs, 4), device=device, dtype=torch.bool)
+        self._episode_length = torch.zeros((num_envs, ), dtype=int, device=device)
 
-        self.feet_air_time = torch.zeros((num_envs, 4), device=device)
-        self.last_actions =  torch.zeros((num_envs, self.NUM_DOFS), device=device)
-        self.last_dof_vel = torch.zeros((num_envs, self.NUM_DOFS), device=device)
-        self.last_contacts = torch.zeros((num_envs, 4), device=device, dtype=torch.bool)
-        self.episode_length = torch.zeros((num_envs, ), dtype=int, device=device)
-
-        self.forward_vec = torch.tensor([1., 0., 0.], device=device).repeat((num_envs, 1))
-
-        self._effort_limit = self._task.get_joint_max_efforts()
-
-        self.step_counter = 0
-
+        self._forward_vec = torch.tensor([1., 0., 0.], device=device).repeat((num_envs, 1))
         self._gravity = torch.tensor([0., 0., -1.], device=self._device).repeat((self.number, 1))
 
-        self._obs = None
+        self._effort_limit = self._task.get_joint_max_efforts()
     
     def _import_helper_functions(self):
         from isaacsim.core.utils.torch.rotations import quat_apply, quat_rotate_inverse
@@ -130,31 +130,26 @@ class IsaacA1Description(IsaacSim):
         return list(zip(names, dynamic_friction, static_friction, restitution))
     
     def _step_finalize(self, env_indices):
-        self.episode_length += 1
-        self.step_counter += 1
+        self._episode_length += 1
 
-        #resample commands and calculate yaw command
-        #env_ids = (self.episode_length % int(10. / self.dt)==0).nonzero(as_tuple=False).flatten()
-
+        #resample commands
         do_resample = self.torch_rand_float(0., 1., (len(env_indices), 1), device=self._device).squeeze(-1) < (1./500.)
-        do_resample *= self.episode_length[env_indices] > 50
+        do_resample *= self._episode_length[env_indices] > 50
         env_ids = env_indices[do_resample]
         self._resample_commands(env_ids)
 
+        #calculate yaw command
         base_quat = self._read_data("body_rot")
-        forward = self.quat_apply(base_quat, self.forward_vec)
+        forward = self.quat_apply(base_quat, self._forward_vec)
         heading = torch.atan2(forward[:, 1], forward[:, 0])
-        self.commands[:, 2] = torch.clip(0.5*self.wrap_to_pi(self.commands[:, 3] - heading), -1., 1.)
+        self._commands[:, 2] = torch.clip(0.5*self.wrap_to_pi(self._commands[:, 3] - heading), -1., 1.)
 
         #domain randomization: push Robot
         do_push = self.torch_rand_float(0., 1., (len(env_indices), 1), device=self._device).squeeze(-1) < (1./750.)
         do_push_ids = env_indices[do_push]
-        do_push_ids = do_push_ids[self.episode_length[do_push_ids] > 50]
-        if self.domain_randomization: #not self.eval
+        do_push_ids = do_push_ids[self._episode_length[do_push_ids] > 50]
+        if self.domain_randomization:
             self._push_robots(do_push_ids)
-        #push_interval = np.ceil(15 / self.dt) + 1
-        #if self.domain_randomization and (self.step_counter % push_interval == 0):
-        #    self._push_robots(env_indices)
     
     def _push_robots(self, env_indices):
         max_vel= 1.
@@ -219,19 +214,16 @@ class IsaacA1Description(IsaacSim):
         return soft_dof_pos_limits
 
     def is_absorbing(self, obs):
-        #fallen = self._check_collision("body", "groundplane", 0.)
-        fallen = torch.norm(self._get_net_collision_forces("body", dt=self._timestep)[:, 0, :], dim=-1) > 1.
-        
+        fallen = torch.norm(self._get_net_collision_forces("body", dt=self._timestep)[:, self._trunk_idx, :], dim=-1) > 1.
         return fallen
     
     def setup(self, env_indices, obs):
         #new
-        self.feet_air_time[env_indices] = 0.
-        #self.last_actions[env_indices] = 0.
-        #self.last_dof_vel[env_indices] = 0.
-        self.episode_length[env_indices] = 0
+        self._feet_air_time[env_indices] = 0.
+        self._episode_length[env_indices] = 0
 
-        dof_pos = self._default_joint_angles * self.torch_rand_float(0.5, 1.5, (len(env_indices), self.NUM_DOFS), device=self._device)
+        r_factors = self.torch_rand_float(0.5, 1.5, (len(env_indices), self.NUM_DOFS), device=self._device)
+        dof_pos = self._default_joint_angles * r_factors
         dof_vel = torch.zeros((len(env_indices), len(self._action_spec)), device=self._device)
 
         self._write_data("joint_pos", dof_pos, env_indices)
@@ -245,7 +237,7 @@ class IsaacA1Description(IsaacSim):
         self._setup_env_indices = env_indices
 
         #update last_dof_vel
-        self.last_dof_vel[env_indices] = dof_vel
+        self._last_dof_vel[env_indices] = dof_vel
 
         self._resample_commands(env_indices)
 
@@ -261,10 +253,10 @@ class IsaacA1Description(IsaacSim):
         obs[:, dof_pos_indices] -= self._default_joint_angles
 
         command_indices = self.observation_helper.obs_idx_map["commands"]
-        obs[:, command_indices] = self.commands[:, :3]
+        obs[:, command_indices] = self._commands[:, :3]
 
-        obs *= self.normalization_obs_vec
-        obs += (2 * torch.rand_like(obs) - 1) * self.noise_scale_vec
+        obs *= self._normalization_obs_vec
+        obs += (2 * torch.rand_like(obs) - 1) * self._noise_scale_vec
 
         obs = torch.clamp(obs, max=100., min=-100.)
 
@@ -287,7 +279,7 @@ class IsaacA1Description(IsaacSim):
         obs[:, gravity_indices] = self.quat_rotate_inverse(rot, self._gravity)
 
         command_indices = self.observation_helper.obs_idx_map["commands"]
-        obs[:, command_indices] = self.commands[:, :3]
+        obs[:, command_indices] = self._commands[:, :3]
 
         action_indices = self.observation_helper.obs_idx_map["actions"]
         obs[:, action_indices] = self._actions
@@ -309,12 +301,12 @@ class IsaacA1Description(IsaacSim):
         return angles
     
     def _resample_commands(self, env_ids):
-        self.commands[env_ids, 0] = self.torch_rand_float(-1., 1., (len(env_ids), 1), device=self._device).squeeze(1)
-        self.commands[env_ids, 1] = self.torch_rand_float(-1., 1., (len(env_ids), 1), device=self._device).squeeze(1)
-        self.commands[env_ids, 3] = self.torch_rand_float(-3.14, 3.14, (len(env_ids), 1), device=self._device).squeeze(1)
+        self._commands[env_ids, 0] = self.torch_rand_float(-1., 1., (len(env_ids), 1), device=self._device).squeeze(1)
+        self._commands[env_ids, 1] = self.torch_rand_float(-1., 1., (len(env_ids), 1), device=self._device).squeeze(1)
+        self._commands[env_ids, 3] = self.torch_rand_float(-3.14, 3.14, (len(env_ids), 1), device=self._device).squeeze(1)
 
         # set small commands to zero
-        self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
+        self._commands[env_ids, :2] *= (torch.norm(self._commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
 
     def _preprocess_action(self, action):
         action = torch.clip(action, min=-100., max=100.)
@@ -322,8 +314,6 @@ class IsaacA1Description(IsaacSim):
         return action
     
     def _compute_action(self, action):
-        #joint_vels = self.observation_helper.get_from_obs(obs, "joint_vel")
-        #dof_positions = self.observation_helper.get_from_obs(obs, "joint_pos")
         joint_vels = self._read_data("joint_vel")
         dof_positions = self._read_data("joint_pos")
         torque = self._compute_torque(action, joint_vels, dof_positions)
@@ -378,8 +368,8 @@ class IsaacA1Description(IsaacSim):
         
         reward = torch.clamp(reward, min=0.)
 
-        self.last_actions = action.clone().detach()
-        self.last_dof_vel = dof_vel.clone().detach()
+        self._last_actions = action.clone().detach()
+        self._last_dof_vel = dof_vel.clone().detach()
         
         return reward
     
@@ -397,43 +387,42 @@ class IsaacA1Description(IsaacSim):
     
     def _reward_dof_acc(self, dof_vel):
         # Penalize dof accelerations
-        return torch.sum(torch.square((self.last_dof_vel - dof_vel) / self.dt), dim=1)
+        return torch.sum(torch.square((self._last_dof_vel - dof_vel) / self.dt), dim=1)
     
     def _reward_action_rate(self, actions):
         # Penalize changes in actions
-        return torch.sum(torch.square(self.last_actions - actions), dim=1)
+        return torch.sum(torch.square(self._last_actions - actions), dim=1)
     
     def _reward_collision(self):
         # Penalize collisions on selected bodies
-        contact = torch.norm(self._get_net_collision_forces("body", dt=self._timestep)[:, 5:], dim=-1) > 0.1
+        forces = self._get_net_collision_forces("body", dt=self._timestep)[:, self._lower_bodies_ids]
+        contact = torch.norm(forces, dim=-1) > 0.1
         return torch.sum(contact, dim=1)
-        #return self._get_collision_count("lower_body", "groundplane")
     
     def _reward_dof_pos_limits(self, dof_pos):
         # Penalize dof positions too close to the limit
         out_of_limits = -(dof_pos - self._soft_dof_pos_limits[:, 0]).clip(max=0.) # lower limit
-        out_of_limits += (dof_pos - self._soft_dof_pos_limits[:, 1]).clip(min=0.)
+        out_of_limits += (dof_pos - self._soft_dof_pos_limits[:, 1]).clip(min=0.) # upper limit
         return torch.sum(out_of_limits, dim=1)
 
     def _reward_tracking_lin_vel(self, lin_vel_xy):
         # Tracking of linear velocity commands (xy axes)
-        lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - lin_vel_xy), dim=1)
+        lin_vel_error = torch.sum(torch.square(self._commands[:, :2] - lin_vel_xy), dim=1)
         return torch.exp(-lin_vel_error/0.25)
     
     def _reward_tracking_ang_vel(self, ang_vel_z):
         # Tracking of angular velocity commands (yaw) 
-        ang_vel_error = torch.square(self.commands[:, 2] - ang_vel_z)
+        ang_vel_error = torch.square(self._commands[:, 2] - ang_vel_z)
         return torch.exp(-ang_vel_error/0.25)
 
     def _reward_feet_air_time(self):
         # Reward long steps
-        #contact = torch.zeros((self.number, 4), device=self._device, dtype=bool)
-        contact = self._get_net_collision_forces("body", dt=self._timestep)[:, 1:5, 2] > 1. #1/4 mass of robot * 9.81
-        contact_filt = torch.logical_or(contact, self.last_contacts) #contact
-        self.last_contacts = contact
-        first_contact = (self.feet_air_time > 0.) * contact_filt
-        self.feet_air_time += self.dt
-        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) # reward only on first contact with the ground
-        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
-        self.feet_air_time *= ~contact_filt
+        contact = self._get_net_collision_forces("body", dt=self._timestep)[:, self._feet_ids, 2] > 1.
+        contact_filt = torch.logical_or(contact, self._last_contacts)
+        self._last_contacts = contact
+        first_contact = (self._feet_air_time > 0.) * contact_filt
+        self._feet_air_time += self.dt
+        rew_airTime = torch.sum((self._feet_air_time - 0.5) * first_contact, dim=1) # reward only on first contact with the ground
+        rew_airTime *= torch.norm(self._commands[:, :2], dim=1) > 0.1 #no reward for zero command
+        self._feet_air_time *= ~contact_filt
         return rew_airTime
