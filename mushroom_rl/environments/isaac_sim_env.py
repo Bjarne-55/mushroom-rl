@@ -14,9 +14,10 @@ class IsaacSim(VectorizedEnvironment):
 
     def __init__(self, usd_path, actuation_spec, observation_spec, backend, device, collision_between_envs, 
                  num_envs, env_spacing, gamma, horizon, timestep=None, n_substeps=1, n_intermediate_steps=1, 
-                 additional_data_spec=None, collision_groups=None, action_type=ActionType.EFFORT, headless=True,
-                 physics_material_spec=None, sim_params=None, camera_position=(5, 0, 4), camera_target=(0, 0, 0),
-                 solver_pos_it_count=None, solver_vel_it_count=None, ground_plane_friction=None):
+                 additional_data_spec=None, collision_groups=None, action_type=ActionType.EFFORT, 
+                 physics_material_spec=None, sim_params=None, solver_pos_it_count=None, solver_vel_it_count=None, 
+                 ground_plane_friction=None, headless=True, camera_position=(5, 0, 4), camera_target=(0, 0, 0),
+                 render_product_size=(1280, 720)):
         """
         Constructor.
 
@@ -48,7 +49,6 @@ class IsaacSim(VectorizedEnvironment):
                 simulation. The entries are given as ``(key, prim_paths)``, where key is a string for later reference and 
                 prim_paths is a list of paths to the prims.
             action_type (ActionType): Control type of the joints (effort, position, velocity).
-            headless (bool): Whether to run in headless mode.
             physics_material_spec (list, None): A list containing all data to create a custom physics material for each environment, which 
                 will be applied to all rigidbodies. 
                 The entries are given as the following tuples: (name, dynamic_friction, static_friction, restitution)
@@ -57,18 +57,21 @@ class IsaacSim(VectorizedEnvironment):
                 gpu_found_lost_pairs_capacity, gpu_heap_capacity, gpu_max_num_partitions, gpu_max_particle_contacts, 
                 gpu_max_rigid_contact_count, gpu_max_rigid_patch_count, gpu_max_soft_body_contacts, 
                 gpu_temp_buffer_capacity, gpu_total_aggregate_pairs_capacity.
-            camera_position (tuple): The position where the camera is placed.
-            camera_target (tuple): The position the camera is aimed at.
             solver_pos_it_count (torch, array): An array with the same size as num_envs. Determines how accurately contacts, 
                 drives, and limits are resolved. Low values can lead to performance improvement
             solver_vel_it_count (torch, array): An array with the same size as num_envs. Determines how accurately contacts, 
                 drives, and limits are resolved. Low values can lead to performance improvement
             ground_plane_friction (tuple, None): A tuple containing the static friciton, dynamic friction and restitution 
                 for the groundplane. The tuple should have the following format: (static_friction, dynamic_friction, restitution)
+            camera_position (tuple): The position where the camera is placed.
+            camera_target (tuple): The position the camera is aimed at.
+            headless (bool): Whether to run in headless mode.
+            render_product_size (tuple): (Width, Height) of the recorded and displayed image.
         """
         self._headless = headless
         self._simulation_app = self._create_simulation_app(headless)
         self._viewer = None
+        self._rp_size = render_product_size
 
         self._apply_carb_settings()
 
@@ -116,7 +119,7 @@ class IsaacSim(VectorizedEnvironment):
         mdp_info = self._modify_mdp_info(mdp_info)
 
         self._recompute_action_per_step = type(self)._compute_action != IsaacSim._compute_action
-        self._obs = None #TODO rework
+        self._obs = None
         
         super().__init__(mdp_info, num_envs)
     
@@ -199,7 +202,7 @@ class IsaacSim(VectorizedEnvironment):
             self._physics_context, usd_path, num_envs, env_spacing, observation_spec, actuation_spec, 
             self._backend, self._device, self._action_type, self._n_intermediate_steps, collision_between_envs, 
             additional_data_spec, collision_groups, physics_material_spec, camera_position, camera_target,
-            solver_pos_it_count, solver_vel_it_count, ground_plane_friction
+            solver_pos_it_count, solver_vel_it_count, ground_plane_friction, self._rp_size
         )
         self._world.add_task(self._task)
 
@@ -215,10 +218,10 @@ class IsaacSim(VectorizedEnvironment):
         data = self._task.rgb_annot.get_data().numpy()[..., :3]
 
         if data.size == 0:
-            data = np.zeros((720, 1280, 3), dtype=np.uint8)
+            data = np.zeros((self._rp_size[1], self._rp_size[0], 3), dtype=np.uint8) #must be Height, Width, rgb
 
         if self._viewer is None:
-            self._viewer = ImageViewer((1280, 720), 0)
+            self._viewer = ImageViewer(self._rp_size, 0)
         self._viewer.display(data)
 
         if record:
@@ -241,8 +244,6 @@ class IsaacSim(VectorizedEnvironment):
             extra_info (dict): Additional information about the simulation step.
         """
         arr_backend = ArrayBackend.get_array_backend(self._mdp_info.backend)
-
-        #cur_obs = self._obs.clone().detach()
 
         action = self._preprocess_action(action)
 
@@ -274,7 +275,7 @@ class IsaacSim(VectorizedEnvironment):
         reward = self.reward(self._obs, action, cur_obs, absorbing)
         extra_info = self._create_info_dictionary(cur_obs)
 
-        #self._obs = cur_obs.clone().detach()#TODO maybe only update active envs
+        self._obs = cur_obs.clone().detach()
 
         cur_obs = self._modify_observation(cur_obs)
         
@@ -394,6 +395,10 @@ class IsaacSim(VectorizedEnvironment):
     @property
     def dt(self):
         return self._timestep * self._n_intermediate_steps * self._n_substeps
+    
+    @property
+    def render_product_size(self):
+        return self._rp_size
     
     def _check_collision(self, group1, group2, threshold=0., selector=None, dt=1.):
         """
