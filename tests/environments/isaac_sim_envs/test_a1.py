@@ -1,5 +1,5 @@
 #import isaacgym
-from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
+from mushroom_rl.environments.isaacsim_envs.a1_walking import A1Walking
 import torch
 
 NUM_ENV = 64
@@ -212,7 +212,7 @@ def mock_rand_like(tensor):
         return 0
     return legged_gym_rand_noise[counter_rand_noise - 1][:, inverted_new_obs_order].to("cuda:0")
 
-class MockIsaacA1(IsaacA1Description):
+class MockIsaacA1(A1Walking):
     def __init__(self, num_envs, horizon, headless, domain_randomization=True):
         super().__init__(num_envs, horizon, headless, domain_randomization)
 
