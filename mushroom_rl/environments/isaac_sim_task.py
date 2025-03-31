@@ -34,7 +34,7 @@ class IsaacSimTask(BaseTask):
                  device, action_type=ActionType.EFFORT, n_intermediate_steps=1, collision_between_envs=False, 
                  additional_data_spec=None, collision_groups=None, physics_material_spec=None, 
                  camera_position=(5, 0, 4), camera_target=(0, 0, 0), solver_pos_it_count=None, solver_vel_it_count=None,
-                 ground_plane_friction=None):
+                 ground_plane_friction=None, render_product_size=(1280, 720)):
         """
         Constructor.
 
@@ -73,6 +73,7 @@ class IsaacSimTask(BaseTask):
                 drives, and limits are resolved. Low values can lead to performance improvement
             ground_plane_friction (tuple, None): A tuple containing the static friciton, dynamic friction and restitution 
                 for the groundplane. The tuple should have the following format: (static_friction, dynamic_friction, restitution)
+            render_product_size (tuple): (Width, Height) of the recorded and displayed image.
         """
         self.usd_path = usd_path
         self._physic_context = physic_context
@@ -91,6 +92,7 @@ class IsaacSimTask(BaseTask):
         self._solver_pos_it_count = solver_pos_it_count
         self._solver_vel_it_count = solver_vel_it_count
         self._ground_plane_friction = ground_plane_friction
+        self._rp_size = render_product_size
 
         self._consistent_property_storage = {}
 
@@ -599,8 +601,8 @@ class IsaacSimTask(BaseTask):
         self.camera_state.set_position_world(Gf.Vec3d(self._initial_camera_pos), True)
         self.camera_state.set_target_world(Gf.Vec3d(self._initial_camera_target), True)
 
-        rp = rep.create.render_product("/OmniverseKit_Persp", (1280, 720))
-        self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb", do_array_copy=False, device="cuda") #, 
+        rp = rep.create.render_product("/OmniverseKit_Persp", self._rp_size)
+        self.rgb_annot = rep.AnnotatorRegistry.get_annotator("rgb", do_array_copy=False, device="cuda")
         self.rgb_annot.attach(rp)
 
     def _create_light(self, stage, prim_path="/World/defaultDistantLight", intensity=1000):
@@ -633,6 +635,7 @@ class IsaacSimTask(BaseTask):
                 )
             view = GeometryPrim(self.prim_paths[i] + "/Robot", reset_xform_properties=False)
             view.apply_physics_materials(materials[name])
+    
     @property
     def _arr_backend(self):
         return ArrayBackend.get_array_backend(self._backend)
