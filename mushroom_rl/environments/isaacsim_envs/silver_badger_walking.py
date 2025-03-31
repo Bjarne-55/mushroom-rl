@@ -1,5 +1,5 @@
 from mushroom_rl.environments import IsaacSim
-from mushroom_rl.environments.isaacsim_envs.honey_badger import HoneyBadger
+from mushroom_rl.environments.isaacsim_envs.honey_badger_walking import HoneyBadgerWalking
 from mushroom_rl.utils.isaac_sim import ActionType, ObservationType
 from mushroom_rl.rl_utils.spaces import Box
 
@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from pathlib import Path
 
-class SilverBadger(HoneyBadger):
+class SilverBadgerWalking(HoneyBadgerWalking):
     """
     Implements the learning environment for the robot Silver Badger
     Silver Badger is a Robot from MAB Robotics: https://www.mabrobotics.pl/

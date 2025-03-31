@@ -10,11 +10,10 @@ import random
 import time
 
 from mushroom_rl.core import VectorCore, Logger
-from mushroom_rl.algorithms.actor_critic import TRPO, PPO
-from mushroom_rl.algorithms.actor_critic.deep_actor_critic.ppo_nikita import NikitaPPO
+from mushroom_rl.algorithms.actor_critic import RudinPPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
-from mushroom_rl.environments.isaacsim_envs.honey_badger import HoneyBadger#TODO fix name
+from mushroom_rl.environments.isaacsim_envs.honey_badger_walking import HoneyBadgerWalking#TODO fix name
 from mushroom_rl.utils import TorchUtils
 
 
@@ -55,7 +54,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = HoneyBadger(num_envs, 1000, True, True)
+    mdp = HoneyBadgerWalking(num_envs, 1000, True, True)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
@@ -132,5 +131,5 @@ if __name__ == '__main__':
         ent_coeff=0.01
     )
     num_envs = 4096
-    experiment(alg=NikitaPPO, num_envs=num_envs, n_epochs=40, n_steps=4096*24*50*3, n_steps_per_fit=4096*24,
+    experiment(alg=RudinPPO, num_envs=num_envs, n_epochs=40, n_steps=4096*24*50*3, n_steps_per_fit=4096*24,
                    n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params)
