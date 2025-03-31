@@ -1,9 +1,7 @@
 import numpy as np
-import torch
 import math
 
 from isaacsim.core.api.tasks import BaseTask
-from isaacsim.core.utils.stage import add_reference_to_stage
 from isaacsim.core.prims import Articulation, RigidPrim, GeometryPrim
 from isaacsim.core.cloner import GridCloner
 from isaacsim.core.utils.types import ArticulationActions
@@ -14,14 +12,14 @@ from omni.kit.viewport.utility import get_viewport_from_window_name
 from omni.kit.viewport.utility.camera_state import ViewportCameraState
 import omni.replicator.core as rep
 from omni.usd import get_context
-from pxr import UsdGeom, Gf, UsdLux, PhysxSchema
+from pxr import Gf, UsdLux, PhysxSchema
 
 from mushroom_rl.utils.isaac_sim import ObservationType, CollisionHelper, ActionType
 from mushroom_rl.core.array_backend import ArrayBackend
 from mushroom_rl.utils import TorchUtils
 
 
-class IsaacSimTask(BaseTask):
+class GeneralTask(BaseTask):
     """
     General isaac sim taks, that can be added to the world and will handle all requests for the isaac sim environment.
     """
@@ -218,11 +216,8 @@ class IsaacSimTask(BaseTask):
         """
         self.collision_helper.post_reset()
 
-        self._controlled_joints = []
-        for joint_name in self._actuation_spec:
-            joint_index = self.robots.get_dof_index(joint_name)
-            self._controlled_joints.append(joint_index)
-        self._controlled_joints = torch.tensor(self._controlled_joints, device=self._device)
+        self._controlled_joints = [self.robots.get_dof_index(joint_name) for joint_name in self._actuation_spec]
+        self._controlled_joints = self._arr_backend.convert(self._controlled_joints)
 
         self._observers = self._create_observer_tuple(self._observation_spec)
         self._additionals = self._create_observer_tuple(self._additional_data_spec)
