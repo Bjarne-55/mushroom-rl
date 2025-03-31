@@ -1,9 +1,9 @@
 from mushroom_rl.environments import IsaacSim
-from mushroom_rl.environments.isaac_sim_env import ObservationType #TODO
+from mushroom_rl.utils.isaac_sim import ObservationType
 import numpy as np
 import torch
 
-class IsaacCartPole(IsaacSim):
+class CartPole(IsaacSim):
     def __init__(self, num_envs):
         backend="torch"
         device="cuda:0"
