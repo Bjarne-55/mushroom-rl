@@ -4,10 +4,10 @@ from mushroom_rl.algorithms.actor_critic.deep_actor_critic import PPO
 from mushroom_rl.utils.minibatches import minibatch_generator
 from mushroom_rl.rl_utils.value_functions import compute_gae
 
-class NikitaPPO(PPO):
+class RudinPPO(PPO):
     """
     Extended PPO algorithm as "Learning to walk in minutes using massively parallel deep reinforcement learning" paper.
-    Introducing grdinet clipping and adaptive leanring rate based on KL divergence.
+    Introducing gradinet clipping and adaptive leanring rate based on KL divergence.
     """
 
     def __init__(self, mdp_info, policy, actor_optimizer, critic_params,
