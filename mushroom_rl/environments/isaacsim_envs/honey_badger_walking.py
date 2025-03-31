@@ -1,5 +1,5 @@
 from mushroom_rl.environments import IsaacSim
-from mushroom_rl.environments.isaacsim_envs.isaac_a1_legged_gym import IsaacA1Description
+from mushroom_rl.environments.isaacsim_envs.a1_walking import A1Walking
 from mushroom_rl.utils.isaac_sim import ActionType, ObservationType
 from mushroom_rl.rl_utils.spaces import Box
 
@@ -10,7 +10,7 @@ from pathlib import Path
 def torch_rand_float(lower, upper, shape, device):
     return (upper - lower) * torch.rand(*shape, device=device) + lower
 
-class HoneyBadger(IsaacSim):
+class HoneyBadgerWalking(IsaacSim):
     """
     Implements the learning environment for the robot Honey Badger
     Honey Badger is a Robot from MAB Robotics: https://www.mabrobotics.pl/

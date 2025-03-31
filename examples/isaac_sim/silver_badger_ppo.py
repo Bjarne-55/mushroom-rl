@@ -13,7 +13,7 @@ from mushroom_rl.core import VectorCore, Logger
 from mushroom_rl.algorithms.actor_critic import TRPO, PPO
 
 from mushroom_rl.policy import GaussianTorchPolicy
-from mushroom_rl.environments.isaacsim_envs.silver_badger import SilverBadger
+from mushroom_rl.environments.isaacsim_envs.silver_badger_walking import SilverBadgerWalking
 from mushroom_rl.utils import TorchUtils
 
 
@@ -54,7 +54,7 @@ def experiment(alg, num_envs, n_epochs, n_steps, n_steps_per_fit, n_episodes_tes
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = SilverBadger(num_envs, 1000, True)
+    mdp = SilverBadgerWalking(num_envs, 1000, True)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
