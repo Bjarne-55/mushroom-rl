@@ -538,7 +538,7 @@ class IsaacSim(VectorizedEnvironment):
         """
         return obs
     
-    def _compute_action(self, obs, action):
+    def _compute_action(self, action):
         """
         Compute a transformation of the action at every intermediate step.
         Useful to add control signals simulated directly in python.
