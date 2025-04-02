@@ -16,7 +16,7 @@ class A1WalkingPos(A1Walking):
     """
     def __init__(self, num_envs, horizon, headless, domain_randomization=True, camera_position=(105, 0, 4), camera_target=(95, 0, 0)):
         usd_path = str(Path(__file__).resolve().parent / "robots_usds/a1/a1.usd")
-        self.NUM_DOFS = 12
+        self.NUM_JOINTS = 12
 
         backend="torch"
         device="cuda:0"
@@ -83,27 +83,27 @@ class A1WalkingPos(A1Walking):
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)
         commands_upper = torch.tensor([1., 1., np.pi], device=device)
         self.observation_helper.add_obs("commands", 3, -commands_upper, commands_upper)
-        self.observation_helper.add_obs("actions", self.NUM_DOFS, self.info.action_space.low, self.info.action_space.high)
+        self.observation_helper.add_obs("actions", self.NUM_JOINTS, self.info.action_space.low, self.info.action_space.high)
 
         #get normalization and noise vector
         self._normalization_obs_vec = self._get_obs_normilization_vec()
         self._noise_scale_vec = self._get_noise_scale_vec()
-        self._soft_dof_pos_limits = self._get_soft_dof_pos_limit()
+        self._soft_joint_pos_limits = self._get_soft_joint_pos_limit()
 
         #update observation space
         obs_low, obs_high = self.observation_helper.obs_limits
-        dof_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
-        obs_low[dof_pos_indices] -= self._default_joint_angles
-        obs_high[dof_pos_indices] -= self._default_joint_angles
+        joint_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
+        obs_low[joint_pos_indices] -= self._default_joint_angles
+        obs_high[joint_pos_indices] -= self._default_joint_angles
         new_obs_low = obs_low * self._normalization_obs_vec - self._noise_scale_vec
         new_obs_high = obs_high * self._normalization_obs_vec + self._noise_scale_vec
         self._mdp_info.observation_space = Box(new_obs_low, new_obs_high, data_type=new_obs_high.dtype)
 
         self._commands = torch.zeros(num_envs, 4, dtype=torch.float, device=device)
-        self._actions = torch.zeros((num_envs, self.NUM_DOFS), device=device)
+        self._actions = torch.zeros((num_envs, self.NUM_JOINTS), device=device)
         self._feet_air_time = torch.zeros((num_envs, 4), device=device)
-        self._last_actions =  torch.zeros((num_envs, self.NUM_DOFS), device=device)
-        self._last_dof_vel = torch.zeros((num_envs, self.NUM_DOFS), device=device)
+        self._last_actions =  torch.zeros((num_envs, self.NUM_JOINTS), device=device)
+        self._last_joint_vel = torch.zeros((num_envs, self.NUM_JOINTS), device=device)
         self._last_contacts = torch.zeros((num_envs, 4), device=device, dtype=torch.bool)
         self._episode_length = torch.zeros((num_envs, ), dtype=int, device=device)
 
@@ -114,8 +114,8 @@ class A1WalkingPos(A1Walking):
 
     def _set_stiffness_damping(self):
         env_ids = torch.arange(0, self.number, 1, dtype=int, device=self._device)
-        self._write_data("joint_damping", torch.full((self.number, self.NUM_DOFS), 0.5, device=self._device), env_ids, reapply_after_reset=True)
-        self._write_data("joint_stiffness", torch.full((self.number, self.NUM_DOFS), 20.0, device=self._device), env_ids, reapply_after_reset=True)
+        self._write_data("joint_damping", torch.full((self.number, self.NUM_JOINTS), 0.5, device=self._device), env_ids, reapply_after_reset=True)
+        self._write_data("joint_stiffness", torch.full((self.number, self.NUM_JOINTS), 20.0, device=self._device), env_ids, reapply_after_reset=True)
     
     def _compute_action(self, action):
         desired_position = action * 0.25 + self._default_joint_angles
