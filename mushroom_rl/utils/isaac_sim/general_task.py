@@ -281,14 +281,14 @@ class GeneralTask(BaseTask):
             env_indices (torch.tensor, np.ndarray, none): The indices of the environments where 
                 the action should be applied. If None, the action is applied to all environments.
         """
-        joints_defaults = self.robots.get_joints_default_state()
-        dof_pos = joints_defaults.positions[env_indices]
-        dof_vel = joints_defaults.velocities[env_indices]
-        dof_eff = joints_defaults.efforts[env_indices]
+        joint_defaults = self.robots.get_joints_default_state()
+        joint_pos = joint_defaults.positions[env_indices]
+        joint_vel = joint_defaults.velocities[env_indices]
+        joint_eff = joint_defaults.efforts[env_indices]
 
-        self.robots.set_joint_positions(dof_pos, indices=env_indices)
-        self.robots.set_joint_velocities(dof_vel, indices=env_indices)
-        self.robots.set_joint_efforts(dof_eff, indices=env_indices)
+        self.robots.set_joint_positions(joint_pos, indices=env_indices)
+        self.robots.set_joint_velocities(joint_vel, indices=env_indices)
+        self.robots.set_joint_efforts(joint_eff, indices=env_indices)
 
         default_state = self.robots.get_default_state()
         default_positions = default_state.positions[env_indices]

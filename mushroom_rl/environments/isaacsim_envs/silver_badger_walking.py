@@ -13,7 +13,7 @@ class SilverBadgerWalking(HoneyBadgerWalking):
     Silver Badger is a Robot from MAB Robotics: https://www.mabrobotics.pl/
     """
     def __init__(self, num_envs, horizon, headless, domain_randomization, camera_pos=(105, 0, 4), camera_target=(95, 0, 0)):
-        self.NUM_DOFS = 13
+        self.NUM_JOINTS = 13
         
         backend="torch"
         device="cuda:0"
@@ -110,7 +110,7 @@ class SilverBadgerWalking(HoneyBadgerWalking):
         
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)
         self.observation_helper.add_obs("commands", 3, -1, 1)
-        self.observation_helper.add_obs("actions", self.NUM_DOFS, self.info.action_space.low, self.info.action_space.high)
+        self.observation_helper.add_obs("actions", self.NUM_JOINTS, self.info.action_space.low, self.info.action_space.high)
         #self.observation_helper.add_obs("foot_ground_contact", 4, 0, 1) #not used
         #self.observation_helper.add_obs("foot_time_since_last_ground_contact", 4, -1., 1.) #not used
         if domain_randomization:
@@ -123,13 +123,13 @@ class SilverBadgerWalking(HoneyBadgerWalking):
         self.noise_scale_vec = self._get_noise_scale_vec()
         self.normalization_obs_offset_vec = self._get_obs_normilzation_offset_vec()
 
-        self._soft_dof_pos_limits = self._get_soft_dof_pos_limit()
+        self._soft_joint_pos_limits = self._get_soft_joint_pos_limit()
         
-        self._actions = torch.zeros((num_envs, self.NUM_DOFS), device=device)
+        self._actions = torch.zeros((num_envs, self.NUM_JOINTS), device=device)
 
         self.feet_air_time = torch.zeros((num_envs, 4), device=device)
-        self.last_actions =  torch.zeros((num_envs, self.NUM_DOFS), device=device)
-        self.last_dof_vel = torch.zeros((num_envs, self.NUM_DOFS), device=device)
+        self.last_actions =  torch.zeros((num_envs, self.NUM_JOINTS), device=device)
+        self.last_joint_vel = torch.zeros((num_envs, self.NUM_JOINTS), device=device)
         self.last_contacts = torch.zeros((num_envs, 4), device=device, dtype=torch.bool)
 
         self.forward_vec = torch.tensor([1., 0., 0.], device=device).repeat((num_envs, 1))

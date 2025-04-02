@@ -14,7 +14,7 @@ class A1Walking(IsaacSim):
     """
     def __init__(self, num_envs, horizon, headless, domain_randomization=True, camera_position=(105, 0, 4), camera_target=(95, 0, 0)):
         usd_path = str(Path(__file__).resolve().parent / "robots_usds/a1/a1.usd")
-        self.NUM_DOFS = 12
+        self.NUM_JOINTS = 12
 
         backend="torch"
         device="cuda:0"
@@ -80,27 +80,27 @@ class A1Walking(IsaacSim):
         self.observation_helper.add_obs("projected_gravity", 3, -1, 1)
         commands_upper = torch.tensor([1., 1., np.pi], device=device)
         self.observation_helper.add_obs("commands", 3, -commands_upper, commands_upper)
-        self.observation_helper.add_obs("actions", self.NUM_DOFS, self.info.action_space.low, self.info.action_space.high)
+        self.observation_helper.add_obs("actions", self.NUM_JOINTS, self.info.action_space.low, self.info.action_space.high)
 
         #get normalization and noise vector
         self._normalization_obs_vec = self._get_obs_normilization_vec()
         self._noise_scale_vec = self._get_noise_scale_vec()
-        self._soft_dof_pos_limits = self._get_soft_dof_pos_limit()
+        self._soft_joint_pos_limits = self._get_soft_joint_pos_limit()
 
         #update observation space
         obs_low, obs_high = self.observation_helper.obs_limits
-        dof_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
-        obs_low[dof_pos_indices] -= self._default_joint_angles
-        obs_high[dof_pos_indices] -= self._default_joint_angles
+        joint_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
+        obs_low[joint_pos_indices] -= self._default_joint_angles
+        obs_high[joint_pos_indices] -= self._default_joint_angles
         new_obs_low = obs_low * self._normalization_obs_vec - self._noise_scale_vec
         new_obs_high = obs_high * self._normalization_obs_vec + self._noise_scale_vec
         self._mdp_info.observation_space = Box(new_obs_low, new_obs_high, data_type=new_obs_high.dtype)
 
         self._commands = torch.zeros(num_envs, 4, dtype=torch.float, device=device)
-        self._actions = torch.zeros((num_envs, self.NUM_DOFS), device=device)
+        self._actions = torch.zeros((num_envs, self.NUM_JOINTS), device=device)
         self._feet_air_time = torch.zeros((num_envs, 4), device=device)
-        self._last_actions =  torch.zeros((num_envs, self.NUM_DOFS), device=device)
-        self._last_dof_vel = torch.zeros((num_envs, self.NUM_DOFS), device=device)
+        self._last_actions =  torch.zeros((num_envs, self.NUM_JOINTS), device=device)
+        self._last_joint_vel = torch.zeros((num_envs, self.NUM_JOINTS), device=device)
         self._last_contacts = torch.zeros((num_envs, 4), device=device, dtype=torch.bool)
         self._episode_length = torch.zeros((num_envs, ), dtype=int, device=device)
 
@@ -201,17 +201,17 @@ class A1Walking(IsaacSim):
 
         return v
     
-    def _get_soft_dof_pos_limit(self):
-        soft_dof_pos_limits = torch.zeros(self.NUM_DOFS, 2, device=self._device, requires_grad=False)
+    def _get_soft_joint_pos_limit(self):
+        soft_joint_pos_limits = torch.zeros(self.NUM_JOINTS, 2, device=self._device, requires_grad=False)
         pos_limit = self._task.get_joint_pos_limits()
         low = pos_limit[0]
         high = pos_limit[1]
         
         middle = (low + high) / 2
         r = high - low
-        soft_dof_pos_limits[:, 0] = middle - 0.5 * r * 0.9
-        soft_dof_pos_limits[:, 1] = middle + 0.5 * r * 0.9
-        return soft_dof_pos_limits
+        soft_joint_pos_limits[:, 0] = middle - 0.5 * r * 0.9
+        soft_joint_pos_limits[:, 1] = middle + 0.5 * r * 0.9
+        return soft_joint_pos_limits
 
     def is_absorbing(self, obs):
         fallen = torch.norm(self._get_net_collision_forces("body", dt=self._timestep)[:, self._trunk_idx, :], dim=-1) > 1.
@@ -222,35 +222,35 @@ class A1Walking(IsaacSim):
         self._feet_air_time[env_indices] = 0.
         self._episode_length[env_indices] = 0
 
-        r_factors = self.torch_rand_float(0.5, 1.5, (len(env_indices), self.NUM_DOFS), device=self._device)
-        dof_pos = self._default_joint_angles * r_factors
-        dof_vel = torch.zeros((len(env_indices), len(self._action_spec)), device=self._device)
+        r_factors = self.torch_rand_float(0.5, 1.5, (len(env_indices), self.NUM_JOINTS), device=self._device)
+        joint_pos = self._default_joint_angles * r_factors
+        joint_vel = torch.zeros((len(env_indices), len(self._action_spec)), device=self._device)
 
-        self._write_data("joint_pos", dof_pos, env_indices)
-        self._write_data("joint_vel", dof_vel, env_indices)
+        self._write_data("joint_pos", joint_pos, env_indices)
+        self._write_data("joint_vel", joint_vel, env_indices)
 
         body_vel = self.torch_rand_float(-0.5, 0.5, (len(env_indices), 6), device=self._device)
         self._write_data("body_vel", body_vel, env_indices)
 
-        self._setup_dof_pos = dof_pos
-        self._setup_dof_vel = dof_vel
+        self._setup_joint_pos = joint_pos
+        self._setup_joint_vel = joint_vel
         self._setup_env_indices = env_indices
 
-        #update last_dof_vel
-        self._last_dof_vel[env_indices] = dof_vel
+        #update last_joint_vel
+        self._last_joint_vel[env_indices] = joint_vel
 
         self._resample_commands(env_indices)
 
         zero = torch.zeros(self._n_envs, device=self._device)
         self._extra_info_rewards = self._extra_info_rewards = {
             "r_tracking_lin_vel": zero, "r_tracking_ang_vel": zero, "r_lin_vel_z": zero,
-            "r_ang_vel_xy": zero, "r_torques": zero, "r_dof_acc": zero, "r_feet_air_time": zero,
-            "r_collision": zero, "r_action_rate": zero, "r_dof_pos_limits": zero
+            "r_ang_vel_xy": zero, "r_torques": zero, "r_joint_acc": zero, "r_feet_air_time": zero,
+            "r_collision": zero, "r_action_rate": zero, "r_joint_pos_limits": zero
         }
 
     def _modify_observation(self, obs):
-        dof_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
-        obs[:, dof_pos_indices] -= self._default_joint_angles
+        joint_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
+        obs[:, joint_pos_indices] -= self._default_joint_angles
 
         command_indices = self.observation_helper.obs_idx_map["commands"]
         obs[:, command_indices] = self._commands[:, :3]
@@ -265,11 +265,11 @@ class A1Walking(IsaacSim):
     def _create_observation(self, obs):
         #update observation with values set in setup
         if self._setup_env_indices is not None:
-            dof_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
-            obs[self._setup_env_indices.unsqueeze(1), dof_pos_indices] = self._setup_dof_pos
+            joint_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
+            obs[self._setup_env_indices.unsqueeze(1), joint_pos_indices] = self._setup_joint_pos
 
-            dof_vel_indices = self.observation_helper.obs_idx_map["joint_vel"]
-            obs[self._setup_env_indices.unsqueeze(1), dof_vel_indices] = self._setup_dof_vel
+            joint_vel_indices = self.observation_helper.obs_idx_map["joint_vel"]
+            obs[self._setup_env_indices.unsqueeze(1), joint_vel_indices] = self._setup_joint_vel
 
             self._setup_env_indices = None
 
@@ -315,8 +315,8 @@ class A1Walking(IsaacSim):
     
     def _compute_action(self, action):
         joint_vels = self._read_data("joint_vel")
-        dof_positions = self._read_data("joint_pos")
-        torque = self._compute_torque(action, joint_vels, dof_positions)
+        joint_positions = self._read_data("joint_pos")
+        torque = self._compute_torque(action, joint_vels, joint_positions)
         return torque
     
     def _create_info_dictionary(self, obs):
@@ -339,8 +339,8 @@ class A1Walking(IsaacSim):
         base_ang_vel_xy = base_ang_vel[:, 0:2]
         base_ang_vel_z = base_ang_vel[:, 2]
 
-        dof_vel = self.observation_helper.get_from_obs(next_obs, "joint_vel")
-        dof_pos = self.observation_helper.get_from_obs(next_obs, "joint_pos")
+        joint_vel = self.observation_helper.get_from_obs(next_obs, "joint_vel")
+        joint_pos = self.observation_helper.get_from_obs(next_obs, "joint_pos")
 
         #---------------------------------------------------------------------------
 
@@ -349,27 +349,27 @@ class A1Walking(IsaacSim):
         r_lin_vel_z = self._reward_lin_vel_z(base_lin_vel_z) * -2.0 * self.dt
         r_ang_vel_xy = self._reward_ang_vel_xy(base_ang_vel_xy) * -0.05 * self.dt
         r_torques = self._reward_torques(self._torques) * -0.0002 * self.dt
-        r_dof_acc = self._reward_dof_acc(dof_vel) * -2.5e-7 * self.dt
+        r_joint_acc = self._reward_joint_acc(joint_vel) * -2.5e-7 * self.dt
         r_feet_air_time = self._reward_feet_air_time() * 1.0 * self.dt
         r_collision = self._reward_collision() * -1. * self.dt
         r_action_rate = self._reward_action_rate(action) * -0.01 * self.dt
-        r_dof_pos_limits = self._reward_dof_pos_limits(dof_pos) * -10.0 * self.dt
+        r_joint_pos_limits = self._reward_joint_pos_limits(joint_pos) * -10.0 * self.dt
 
         self._extra_info_rewards = {
             "tracking_lin_vel": r_tracking_lin_vel, "tracking_ang_vel": r_tracking_ang_vel,
             "lin_vel_z": r_lin_vel_z, "ang_vel_xy": r_ang_vel_xy, 
-            "torques": r_torques, "dof_acc": r_dof_acc, 
+            "torques": r_torques, "joint_acc": r_joint_acc, 
             "feet_air_time": r_feet_air_time, "collision": r_collision, 
-            "action_rate": r_action_rate, "dof_pos_limits": r_dof_pos_limits
+            "action_rate": r_action_rate, "joint_pos_limits": r_joint_pos_limits
         }
 
-        reward = r_tracking_lin_vel + r_tracking_ang_vel + r_lin_vel_z + r_ang_vel_xy + r_torques + r_dof_acc + r_feet_air_time \
-                + r_collision + r_action_rate + r_dof_pos_limits
+        reward = r_tracking_lin_vel + r_tracking_ang_vel + r_lin_vel_z + r_ang_vel_xy + r_torques + r_joint_acc + r_feet_air_time \
+                + r_collision + r_action_rate + r_joint_pos_limits
         
         reward = torch.clamp(reward, min=0.)
 
         self._last_actions = action.clone().detach()
-        self._last_dof_vel = dof_vel.clone().detach()
+        self._last_joint_vel = joint_vel.clone().detach()
         
         return reward
     
@@ -385,9 +385,9 @@ class A1Walking(IsaacSim):
         # Penalize torques
         return torch.sum(torch.square(torques), dim=1)
     
-    def _reward_dof_acc(self, dof_vel):
-        # Penalize dof accelerations
-        return torch.sum(torch.square((self._last_dof_vel - dof_vel) / self.dt), dim=1)
+    def _reward_joint_acc(self, joint_vel):
+        # Penalize joint accelerations
+        return torch.sum(torch.square((self._last_joint_vel - joint_vel) / self.dt), dim=1)
     
     def _reward_action_rate(self, actions):
         # Penalize changes in actions
@@ -399,10 +399,10 @@ class A1Walking(IsaacSim):
         contact = torch.norm(forces, dim=-1) > 0.1
         return torch.sum(contact, dim=1)
     
-    def _reward_dof_pos_limits(self, dof_pos):
-        # Penalize dof positions too close to the limit
-        out_of_limits = -(dof_pos - self._soft_dof_pos_limits[:, 0]).clip(max=0.) # lower limit
-        out_of_limits += (dof_pos - self._soft_dof_pos_limits[:, 1]).clip(min=0.) # upper limit
+    def _reward_joint_pos_limits(self, joint_pos):
+        # Penalize joint positions too close to the limit
+        out_of_limits = -(joint_pos - self._soft_joint_pos_limits[:, 0]).clip(max=0.) # lower limit
+        out_of_limits += (joint_pos - self._soft_joint_pos_limits[:, 1]).clip(min=0.) # upper limit
         return torch.sum(out_of_limits, dim=1)
 
     def _reward_tracking_lin_vel(self, lin_vel_xy):
