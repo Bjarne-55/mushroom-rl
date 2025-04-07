@@ -201,9 +201,8 @@ class HoneyBadgerWalkingA1(IsaacSim):
             self.current_nr_delay_steps = 0
 
         if self.np_rng.uniform() < 0.0002:
-            pass
-            #self.sample_unseen_noise_factors(torch.arange(0, self.number, 1, device=self._device)) #maybe probability for every single environment
-            #self.sample_seen_parameters(torch.arange(0, self.number, 1, device=self._device))
+            self.sample_unseen_noise_factors(torch.arange(0, self.number, 1, device=self._device)) #maybe probability for every single environment
+            self.sample_seen_parameters(torch.arange(0, self.number, 1, device=self._device))
     
     def _push_robots(self, env_indices):
         max_vel= 1.
@@ -234,7 +233,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
         v[actions] = 1.
         #v[pos] = 1 / 0.31
 
-        #joint_nominal_pos_ids = self.observation_helper.obs_idx_map["joint_nominal_position"]
+        joint_nominal_pos_ids = self.observation_helper.obs_idx_map["joint_nominal_position"]
         torque_limit_ids = self.observation_helper.obs_idx_map["torque_limit"]
         joint_max_velocity_ids = self.observation_helper.obs_idx_map["joint_max_velocity"]
         joint_damping_ids = self.observation_helper.obs_idx_map["joint_damping"]
@@ -246,7 +245,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
         action_scaling_factor_ids = self.observation_helper.obs_idx_map["action_scaling_factor"]
         mass_ids = self.observation_helper.obs_idx_map["mass"]
 
-        #v[joint_nominal_pos_ids] = 1. / 4.6
+        v[joint_nominal_pos_ids] = 1. / 4.6
         v[torque_limit_ids] = 1. / (1000.0 / 2)
         v[joint_max_velocity_ids] = 1. / (35.0 / 2)
         v[joint_damping_ids] = 1. / (10.0 / 2)
@@ -295,7 +294,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
         action_scaling_factor_ids = self.observation_helper.obs_idx_map["action_scaling_factor"]
         mass_ids = self.observation_helper.obs_idx_map["mass"]
         foot_scaling_ids = self.observation_helper.obs_idx_map["foot_size"]
-
+        
         v[torque_limit_ids] = -1
         v[joint_max_velocity_ids] = -1
         v[joint_damping_ids] = -1
@@ -365,7 +364,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
         self.action_history[:, env_indices, :] = 0
 
     def _modify_observation(self, obs):
-        #obs = self._add_seen_parameters(obs)
+        obs = self._add_seen_parameters(obs)
 
         joint_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
         obs[:, joint_pos_indices] -= self._default_joint_angles
@@ -448,7 +447,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
     
     def _compute_torque(self, action, joint_vels, joint_pos):
         action_scaled = action * self._seen_scaling_factor
-        target_joint_pos = self._seen_joint_nominal_pos + action_scaled
+        target_joint_pos = self._default_joint_angles + action_scaled
 
         self._torques = self._unseen_p_gain * (target_joint_pos - joint_pos + self._joint_position_offset) \
             - self._unseen_d_gain * joint_vels
@@ -772,14 +771,12 @@ class HoneyBadgerWalkingA1(IsaacSim):
             add_scaling_factor_min=-0.03, add_scaling_factor_max=0.03,  
         ):
         #joints
-        """
         self.observation_helper.add_obs(
             name="joint_nominal_position", 
             length=self.NUM_JOINTS, 
             min_value=(self._default_joint_angles + add_joint_nominal_position_min) / 4.6, 
             max_value=(self._default_joint_angles + add_joint_nominal_position_max) / 4.6
         )
-        """
         self.observation_helper.add_obs(
             name="torque_limit", 
             length=self.NUM_JOINTS, 
@@ -792,7 +789,6 @@ class HoneyBadgerWalkingA1(IsaacSim):
             min_value=(self._default_joint_max_vel * (1 - joint_velocity_factor)) / (35.0 / 2) - 1.0,
             max_value=(self._default_joint_max_vel * (1 + joint_velocity_factor)) / (35.0 / 2) - 1.0
         )
-        """
         self.observation_helper.add_obs(
             name="joint_damping",
             length=self.NUM_JOINTS,
@@ -835,7 +831,6 @@ class HoneyBadgerWalkingA1(IsaacSim):
             min_value=0.25 + add_scaling_factor_min / (0.8 / 2) - 1.0,
             max_value=0.25 + add_scaling_factor_max / (0.8 / 2) - 1.0
         )
-        """
 
         #mass, com foot scaling
         self.observation_helper.add_obs(
@@ -870,7 +865,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
 
         joint_max_velocity_ids = self.observation_helper.obs_idx_map["joint_max_velocity"]
         obs[:, joint_max_velocity_ids] = self._seen_joint_max_vel
-
+        
         joint_damping_ids = self.observation_helper.obs_idx_map["joint_damping"]
         obs[:, joint_damping_ids] = self._seen_joint_damping
 
@@ -891,7 +886,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
 
         action_scaling_factor_ids = self.observation_helper.obs_idx_map["action_scaling_factor"]
         obs[:, action_scaling_factor_ids] = self._seen_scaling_factor
-
+        
         mass_ids = self.observation_helper.obs_idx_map["mass"]
         obs[:, mass_ids] = self._seen_summed_mass.unsqueeze(1)
 
@@ -900,5 +895,5 @@ class HoneyBadgerWalkingA1(IsaacSim):
 
         trunk_com_ids = self.observation_helper.obs_idx_map["trunk_com"] #could do problems not normalization
         obs[:, trunk_com_ids] = self.seen_trunk_com.squeeze(1)
-
+        
         return obs
