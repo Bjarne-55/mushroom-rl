@@ -5,20 +5,15 @@ import torch
 from mushroom_rl.rl_utils.spaces import Box
 from pathlib import Path
 
-def torch_rand_float(lower, upper, shape, device):
-    return (upper - lower) * torch.rand(*shape, device=device) + lower
-
 class HoneyBadgerWalkingA1(IsaacSim):
     """
-    A learning environment for training the A1 quadroped to walk. 
-    
-    Resembles environment implemented by Rudin et al. for 
-    "Learning to Walk in Minutes Using Massively Parallel Deep Reinforcement Learning"
+    A learning environment for training the Honey Badger quadroped to walk. 
+    Honey Badger is a Robot from MAB Robotics: https://www.mabrobotics.pl/
     """
     MAX_NR_DELAY_STEPS = 1
     MIXED_CHANCE = 0.05
 
-    def __init__(self, num_envs, horizon, headless, domain_randomization=True, camera_position=(105, 0, 4), camera_target=(95, 0, 0)):
+    def __init__(self, num_envs, horizon, headless, domain_randomization=True, camera_pos=(105, 0, 4), camera_target=(95, 0, 0)):
         usd_path = str(Path(__file__).resolve().parent / "robots_usds/honey_badger/honey_badger.usd")
         self.NUM_JOINTS = 12
 
@@ -51,7 +46,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
             ("base_ang_vel", "", ObservationType.BODY_ANG_VEL, None),
             ("joint_pos", "", ObservationType.JOINT_POS, self._action_spec),
             ("joint_vel", "", ObservationType.JOINT_VEL, self._action_spec),
-            #("base_pos", "", ObservationType.BODY_POS, None)
+            ("base_pos", "", ObservationType.BODY_POS, None),
         ]
         sub_bodies = [
             "body", 
@@ -60,7 +55,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
             "fl_l2", "fr_l2", "rl_l2", "rr_l2",
             "fl_foot", "fr_foot", "rl_foot", "rr_foot"
         ]
-        additional_data_spec = [#TODO missing joint range
+        additional_data_spec = [
             ("body_rot", "", ObservationType.BODY_ROT, None), 
             ("body_vel", "", ObservationType.BODY_VEL, None),
             ("trunk_mass", "", ObservationType.SUB_BODY_MASS, "body"),
@@ -81,7 +76,6 @@ class HoneyBadgerWalkingA1(IsaacSim):
             ("robot_mass", "", ObservationType.SUB_BODY_MASS, sub_bodies),
         ]
 
-        #one collision group is faster, of course it would be cleaner with 3 (feet, body, lower_body)
         collision_groups = [
             ("feet", ["/fl_foot", "/fr_foot", "/rl_foot", "/rr_foot"]), 
             ("body", ["/body", "/fl_l1", "/fr_l1", "/rl_l1", "/rr_l1"]),
@@ -103,11 +97,12 @@ class HoneyBadgerWalkingA1(IsaacSim):
         super().__init__(usd_path, self._action_spec, observation_spec, backend, device, collision_between_envs, num_envs, 
                          env_spacing, 0.99, horizon, additional_data_spec=additional_data_spec, collision_groups=collision_groups, 
                          action_type=ActionType.EFFORT, headless=headless, n_intermediate_steps=4, timestep=0.005, 
-                         physics_material_spec=physics_material_spec, sim_params=sim_params, camera_position=camera_position, 
+                         physics_material_spec=physics_material_spec, sim_params=sim_params, camera_position=camera_pos, 
                          camera_target=camera_target, solver_pos_it_count=solver_pos, solver_vel_it_count=solver_vel) 
         self._import_helper_functions()
-        self._init_domain_randomization_parameters()
-        
+        if self.domain_randomization:
+            self._init_domain_randomization_parameters()
+
         #update action space
         action_limits = (self._task.get_joint_pos_limits() - self._default_joint_angles) / 0.25
         self._mdp_info.action_space = Box(*action_limits, data_type=action_limits[0].dtype)
@@ -118,12 +113,12 @@ class HoneyBadgerWalkingA1(IsaacSim):
         self.observation_helper.add_obs("commands", 3, -commands_upper, commands_upper)
         self.observation_helper.add_obs("actions", self.NUM_JOINTS, self.info.action_space.low, self.info.action_space.high)
 
-        self.add_domain_randomization_observations()
+        if self.domain_randomization:
+            self.add_domain_randomization_observations()
 
         #get normalization and noise vector
         self._normalization_obs_vec = self._get_obs_normilization_vec()
         self._noise_scale_vec = self._get_noise_scale_vec()
-        self.normalization_obs_offset_vec = self._get_obs_normilzation_offset_vec()
         self._soft_joint_pos_limits = self._get_soft_joint_pos_limit()
 
         #update observation space
@@ -148,11 +143,11 @@ class HoneyBadgerWalkingA1(IsaacSim):
 
         self._effort_limit = self._task.get_joint_max_efforts()
 
-
-        self.np_rng = np.random.default_rng()
-        self.current_mixed = False
-        self.current_nr_delay_steps = 0
-        self.action_history = torch.zeros((self.MAX_NR_DELAY_STEPS + 1, self.number, self.NUM_JOINTS), device=self._device)
+        #domain randomization
+        self._np_rng = np.random.default_rng()
+        self._current_mixed = False
+        self._current_nr_delay_steps = 0
+        self._action_history = torch.zeros((self.MAX_NR_DELAY_STEPS + 1, self.number, self.NUM_JOINTS), device=self._device)
     
     def _import_helper_functions(self):
         from isaacsim.core.utils.torch.rotations import quat_apply, quat_rotate_inverse
@@ -190,19 +185,20 @@ class HoneyBadgerWalkingA1(IsaacSim):
         self._commands[:, 2] = torch.clip(0.5*self.wrap_to_pi(self._commands[:, 3] - heading), -1., 1.)
 
         #domain randomization: push Robot
-        do_push = self.torch_rand_float(0., 1., (len(env_indices), 1), device=self._device).squeeze(-1) < (1./750.)
-        do_push_ids = env_indices[do_push]
-        do_push_ids = do_push_ids[self._episode_length[do_push_ids] > 50]
         if self.domain_randomization:
+            do_push = self.torch_rand_float(0., 1., (len(env_indices), 1), device=self._device).squeeze(-1) < (1./750.)
+            do_push_ids = env_indices[do_push]
+            do_push_ids = do_push_ids[self._episode_length[do_push_ids] > 50]
+            
             self._push_robots(do_push_ids)
 
-        if self.np_rng.uniform() < 0.002:
-            self.current_mixed = self.np_rng.uniform() < self.MIXED_CHANCE
-            self.current_nr_delay_steps = 0
+            if self._np_rng.uniform() < 0.002:
+                self._current_mixed = self._np_rng.uniform() < self.MIXED_CHANCE
+                self._current_nr_delay_steps = 0
 
-        if self.np_rng.uniform() < 0.0002:
-            self.sample_unseen_noise_factors(torch.arange(0, self.number, 1, device=self._device)) #maybe probability for every single environment
-            self.sample_seen_parameters(torch.arange(0, self.number, 1, device=self._device))
+            if self._np_rng.uniform() < 0.0004:
+                self.sample_unseen_noise_factors(torch.arange(0, self.number, 1, device=self._device))
+                self.sample_seen_parameters(torch.arange(0, self.number, 1, device=self._device))
     
     def _push_robots(self, env_indices):
         max_vel= 1.
@@ -221,7 +217,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
         gravity = self.observation_helper.obs_idx_map["projected_gravity"]
         commands = self.observation_helper.obs_idx_map["commands"]
         actions = self.observation_helper.obs_idx_map["actions"]
-        #pos = self.observation_helper.obs_idx_map["base_pos"]
+        pos = self.observation_helper.obs_idx_map["base_pos"]
         
         v[lin_vel] = 2.0
         v[ang_vel] = 0.25
@@ -231,31 +227,32 @@ class HoneyBadgerWalkingA1(IsaacSim):
         v[commands[0:2]] = 2.0
         v[commands[2]] = 0.25
         v[actions] = 1.
-        #v[pos] = 1 / 0.31
+        v[pos] = 1 / 0.4
 
-        joint_nominal_pos_ids = self.observation_helper.obs_idx_map["joint_nominal_position"]
-        torque_limit_ids = self.observation_helper.obs_idx_map["torque_limit"]
-        joint_max_velocity_ids = self.observation_helper.obs_idx_map["joint_max_velocity"]
-        joint_damping_ids = self.observation_helper.obs_idx_map["joint_damping"]
-        joint_stiffness_ids = self.observation_helper.obs_idx_map["joint_stiffness"]
-        joint_armature_ids = self.observation_helper.obs_idx_map["joint_armature"]
-        joint_frictionloss_ids = self.observation_helper.obs_idx_map["joint_frictionloss"]
-        p_gain_ids = self.observation_helper.obs_idx_map["p_gain"]
-        d_gain_ids = self.observation_helper.obs_idx_map["d_gain"]
-        action_scaling_factor_ids = self.observation_helper.obs_idx_map["action_scaling_factor"]
-        mass_ids = self.observation_helper.obs_idx_map["mass"]
+        if self.domain_randomization:
+            joint_nominal_pos_ids = self.observation_helper.obs_idx_map["joint_nominal_position"]
+            torque_limit_ids = self.observation_helper.obs_idx_map["torque_limit"]
+            joint_max_velocity_ids = self.observation_helper.obs_idx_map["joint_max_velocity"]
+            joint_damping_ids = self.observation_helper.obs_idx_map["joint_damping"]
+            joint_stiffness_ids = self.observation_helper.obs_idx_map["joint_stiffness"]
+            joint_armature_ids = self.observation_helper.obs_idx_map["joint_armature"]
+            joint_frictionloss_ids = self.observation_helper.obs_idx_map["joint_frictionloss"]
+            p_gain_ids = self.observation_helper.obs_idx_map["p_gain"]
+            d_gain_ids = self.observation_helper.obs_idx_map["d_gain"]
+            action_scaling_factor_ids = self.observation_helper.obs_idx_map["action_scaling_factor"]
+            mass_ids = self.observation_helper.obs_idx_map["mass"]
 
-        v[joint_nominal_pos_ids] = 1. / 4.6
-        v[torque_limit_ids] = 1. / (1000.0 / 2)
-        v[joint_max_velocity_ids] = 1. / (35.0 / 2)
-        v[joint_damping_ids] = 1. / (10.0 / 2)
-        v[joint_stiffness_ids] = 1. / (30.0 / 2)
-        v[joint_armature_ids] = 1. / (0.2 / 2)
-        v[joint_frictionloss_ids] = 1. / (1.2 / 2)
-        v[p_gain_ids] = 1. / (100.0 / 2)
-        v[d_gain_ids] = 1. / (2.0 / 2)
-        v[action_scaling_factor_ids] = 1. / (0.8 / 2)
-        v[mass_ids] = 1. / (170.0 / 2)
+            v[joint_nominal_pos_ids] = 1. / 4.6
+            v[torque_limit_ids] = 1. / (1000.0 / 2)
+            v[joint_max_velocity_ids] = 1. / (35.0 / 2)
+            v[joint_damping_ids] = 1. / (10.0 / 2)
+            v[joint_stiffness_ids] = 1. / (30.0 / 2)
+            v[joint_armature_ids] = 1. / (0.2 / 2)
+            v[joint_frictionloss_ids] = 1. / (1.2 / 2)
+            v[p_gain_ids] = 1. / (100.0 / 2)
+            v[d_gain_ids] = 1. / (2.0 / 2)
+            v[action_scaling_factor_ids] = 1. / (0.8 / 2)
+            v[mass_ids] = 1. / (170.0 / 2)
 
         return v
 
@@ -277,38 +274,6 @@ class HoneyBadgerWalkingA1(IsaacSim):
         v[gravity] = 0.05
         v[commands[:3]] = 0
         v[actions] = 0
-
-        return v
-    
-    def _get_obs_normilzation_offset_vec(self):
-        v = torch.zeros((self.observation_helper.obs_length), device=self._device)
-        
-        torque_limit_ids = self.observation_helper.obs_idx_map["torque_limit"]
-        joint_max_velocity_ids = self.observation_helper.obs_idx_map["joint_max_velocity"]
-        joint_damping_ids = self.observation_helper.obs_idx_map["joint_damping"]
-        joint_stiffness_ids = self.observation_helper.obs_idx_map["joint_stiffness"]
-        joint_armature_ids = self.observation_helper.obs_idx_map["joint_armature"]
-        joint_frictionloss_ids = self.observation_helper.obs_idx_map["joint_frictionloss"]
-        p_gain_ids = self.observation_helper.obs_idx_map["p_gain"]
-        d_gain_ids = self.observation_helper.obs_idx_map["d_gain"]
-        action_scaling_factor_ids = self.observation_helper.obs_idx_map["action_scaling_factor"]
-        mass_ids = self.observation_helper.obs_idx_map["mass"]
-        foot_scaling_ids = self.observation_helper.obs_idx_map["foot_size"]
-        
-        v[torque_limit_ids] = -1
-        v[joint_max_velocity_ids] = -1
-        v[joint_damping_ids] = -1
-        v[joint_stiffness_ids] = -1
-        v[joint_armature_ids] = -1
-        v[joint_frictionloss_ids] = -1
-        v[p_gain_ids] = -1
-        v[d_gain_ids] = -1
-        v[action_scaling_factor_ids] = -1
-        v[mass_ids] = -1
-        v[foot_scaling_ids] = -1
-
-        #pos = self.observation_helper.obs_idx_map["base_pos"]
-        #v[pos] = -1
 
         return v
     
@@ -334,9 +299,11 @@ class HoneyBadgerWalkingA1(IsaacSim):
         self._feet_air_time[env_indices] = 0.
         self._episode_length[env_indices] = 0
 
-        r_factors = self.torch_rand_float(0.5, 1.5, (len(env_indices), self.NUM_JOINTS), device=self._device)
-        joint_pos = self._default_joint_angles * r_factors
-        #joint_pos = self._seen_joint_nominal_pos[env_indices]
+        if self.domain_randomization:
+            joint_pos = self._seen_joint_nominal_pos[env_indices]
+        else:
+            r_factors = self.torch_rand_float(0.5, 1.5, (len(env_indices), self.NUM_JOINTS), device=self._device)
+            joint_pos = self._default_joint_angles * r_factors
         joint_vel = torch.zeros((len(env_indices), len(self._action_spec)), device=self._device)
 
         self._write_data("joint_pos", joint_pos, env_indices)
@@ -361,7 +328,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
             "r_collision": zero, "r_action_rate": zero, "r_joint_pos_limits": zero
         }
 
-        self.action_history[:, env_indices, :] = 0
+        self._action_history[:, env_indices, :] = 0
 
     def _modify_observation(self, obs):
         obs = self._add_seen_parameters(obs)
@@ -374,7 +341,6 @@ class HoneyBadgerWalkingA1(IsaacSim):
 
         obs *= self._normalization_obs_vec
         obs += (2 * torch.rand_like(obs) - 1) * self._noise_scale_vec
-        #obs += self.normalization_obs_offset_vec
 
         obs = torch.clamp(obs, max=100., min=-100.)
 
@@ -410,8 +376,8 @@ class HoneyBadgerWalkingA1(IsaacSim):
         ang_vel = self.observation_helper.get_from_obs(obs, "base_ang_vel")
         obs[:, ang_vel_indices] = self.quat_rotate_inverse(rot, ang_vel)
 
-        #base_pos_indices = self.observation_helper.obs_idx_map["base_pos"]
-        #obs[:, base_pos_indices[:2]] = 0
+        base_pos_indices = self.observation_helper.obs_idx_map["base_pos"]
+        obs[:, base_pos_indices[:2]] = 0
 
         return obs
     
@@ -435,7 +401,8 @@ class HoneyBadgerWalkingA1(IsaacSim):
     # control ---------------------------------------------------------------------------------------
     def _preprocess_action(self, action):
         action = torch.clip(action, min=-100., max=100.)
-        action = self.delay_action(action)
+        if self.domain_randomization:
+            action = self.delay_action(action)
         self._actions[:] = action[:]
         return action
     
@@ -447,7 +414,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
     
     def _compute_torque(self, action, joint_vels, joint_pos):
         action_scaled = action * self._seen_scaling_factor
-        target_joint_pos = self._default_joint_angles + action_scaled
+        target_joint_pos = self._seen_joint_nominal_pos + action_scaled
 
         self._torques = self._unseen_p_gain * (target_joint_pos - joint_pos + self._joint_position_offset) \
             - self._unseen_d_gain * joint_vels
@@ -455,15 +422,6 @@ class HoneyBadgerWalkingA1(IsaacSim):
         self._torques = torch.clip(self._torques, -self._seen_torque_limit, self._seen_torque_limit)
 
         return self._torques
-    
-    """
-    def _compute_torque(self, action, joint_vels, joint_pos):
-        actions_scaled = action * 0.25
-        self._torques = 20.0 * (actions_scaled + self._default_joint_angles - joint_pos) - 0.5*joint_vels
-        self._torques = torch.clip(self._torques, -self._effort_limit, self._effort_limit)
-        
-        return self._torques
-    """
     
     #Taken from https://proceedings.mlr.press/v164/rudin22a.html
     #Taken from https://github.com/leggedrobotics/legged_gym/blob/17847702f90d8227cd31cce9c920aa53a739a09a/legged_gym/envs/base/legged_robot.py#L815C3-L816C12
@@ -478,8 +436,8 @@ class HoneyBadgerWalkingA1(IsaacSim):
         joint_vel = self.observation_helper.get_from_obs(next_obs, "joint_vel")
         joint_pos = self.observation_helper.get_from_obs(next_obs, "joint_pos")
 
-        #base_pos = self.observation_helper.get_from_obs(next_obs, "base_pos")
-        #base_pos_z = base_pos[:, 2]
+        base_pos = self.observation_helper.get_from_obs(next_obs, "base_pos")
+        base_pos_z = base_pos[:, 2]
 
         #---------------------------------------------------------------------------
 
@@ -493,7 +451,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
         r_collision = self._reward_collision() * -1. * self.dt
         r_action_rate = self._reward_action_rate(action) * -0.01 * self.dt
         r_joint_pos_limits = self._reward_joint_pos_limits(joint_pos) * -10.0 * self.dt
-        #r_height = self._reward_height(base_pos_z) * -5 * self.dt
+        r_height = self._reward_height(base_pos_z) * -4. * self.dt
 
         self._extra_info_rewards = {
             "tracking_lin_vel": r_tracking_lin_vel, "tracking_ang_vel": r_tracking_ang_vel,
@@ -504,7 +462,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
         }
 
         reward = r_tracking_lin_vel + r_tracking_ang_vel + r_lin_vel_z + r_ang_vel_xy + r_torques + r_joint_acc + r_feet_air_time \
-                + r_collision + r_action_rate + r_joint_pos_limits #+ r_height
+                + r_collision + r_action_rate + r_joint_pos_limits + r_height
         
         reward = torch.clamp(reward, min=0.)
 
@@ -574,13 +532,13 @@ class HoneyBadgerWalkingA1(IsaacSim):
     
     # Domain Randomization ----------------------------------------------------------------------------------
     def delay_action(self, action):
-        if self.current_mixed:
-            self.current_nr_delay_steps = self.np_rng.integers(self.MAX_NR_DELAY_STEPS+1)
+        if self._current_mixed:
+            self._current_nr_delay_steps = self._np_rng.integers(self.MAX_NR_DELAY_STEPS+1)
 
-        self.action_history = torch.roll(self.action_history, -1, dims=0)
-        self.action_history[-1] = action
+        self._action_history = torch.roll(self._action_history, -1, dims=0)
+        self._action_history[-1] = action
 
-        chosen_action = self.action_history[-1-self.current_nr_delay_steps]
+        chosen_action = self._action_history[-1 - self._current_nr_delay_steps]
 
         return chosen_action
     
@@ -649,19 +607,19 @@ class HoneyBadgerWalkingA1(IsaacSim):
         ):
         n_envs = env_indices.shape[0]
 
-        self._nf_trunk_mass[env_indices] = torch_rand_float(1 - trunk_mass_factor, 1 + trunk_mass_factor, (n_envs, 1), self._device)
-        self._nf_trunk_com[env_indices] = torch_rand_float(1 - trunk_com_factor, 1 + trunk_com_factor, (n_envs, 1), self._device)
-        self._nf_foot_size[env_indices] = torch_rand_float(1 - foot_size_factor, 1 + foot_size_factor, (n_envs, 1), self._device)
-        self._nf_joint_damping[env_indices] = torch_rand_float(1 - joint_damping_factor, 1 + joint_damping_factor, (n_envs, 1), self._device)
-        self._nf_joint_stiffness[env_indices] = torch_rand_float(1 - joint_stiffness_factor, 1 + joint_stiffness_factor, (n_envs, 1), self._device)
-        self._nf_joint_armature[env_indices] = torch_rand_float(1 - joint_armature_factor, 1 + joint_armature_factor, (n_envs, 1), self._device)
-        self._nf_joint_friction[env_indices] = torch_rand_float(1 - joint_friction_factor, 1 + joint_friction_factor, (n_envs, 1), self._device)
+        self._nf_trunk_mass[env_indices] = self.torch_rand_float(1 - trunk_mass_factor, 1 + trunk_mass_factor, (n_envs, 1), self._device)
+        self._nf_trunk_com[env_indices] = self.torch_rand_float(1 - trunk_com_factor, 1 + trunk_com_factor, (n_envs, 1), self._device)
+        self._nf_foot_size[env_indices] = self.torch_rand_float(1 - foot_size_factor, 1 + foot_size_factor, (n_envs, 1), self._device)
+        self._nf_joint_damping[env_indices] = self.torch_rand_float(1 - joint_damping_factor, 1 + joint_damping_factor, (n_envs, 1), self._device)
+        self._nf_joint_stiffness[env_indices] = self.torch_rand_float(1 - joint_stiffness_factor, 1 + joint_stiffness_factor, (n_envs, 1), self._device)
+        self._nf_joint_armature[env_indices] = self.torch_rand_float(1 - joint_armature_factor, 1 + joint_armature_factor, (n_envs, 1), self._device)
+        self._nf_joint_friction[env_indices] = self.torch_rand_float(1 - joint_friction_factor, 1 + joint_friction_factor, (n_envs, 1), self._device)
 
         #control function
-        self._nf_p_gain[env_indices] = torch_rand_float(1 - p_gain_factor, 1 + p_gain_factor, (n_envs, 1), self._device)
-        self._nf_d_gain[env_indices] = torch_rand_float(1 - d_gain_factor, 1 + d_gain_factor, (n_envs, 1), self._device)
-        self._nf_motor_strength[env_indices] = torch_rand_float(1 - motor_strength_factor, 1 + motor_strength_factor, (n_envs, 1), self._device)
-        self._joint_position_offset[env_indices] = torch_rand_float(-position_offset, position_offset, (n_envs, self.NUM_JOINTS), self._device)#something with model nu
+        self._nf_p_gain[env_indices] = self.torch_rand_float(1 - p_gain_factor, 1 + p_gain_factor, (n_envs, 1), self._device)
+        self._nf_d_gain[env_indices] = self.torch_rand_float(1 - d_gain_factor, 1 + d_gain_factor, (n_envs, 1), self._device)
+        self._nf_motor_strength[env_indices] = self.torch_rand_float(1 - motor_strength_factor, 1 + motor_strength_factor, (n_envs, 1), self._device)
+        self._joint_position_offset[env_indices] = self.torch_rand_float(-position_offset, position_offset, (n_envs, self.NUM_JOINTS), self._device)
     
     def sample_seen_parameters(
             self, env_indices,
@@ -685,7 +643,7 @@ class HoneyBadgerWalkingA1(IsaacSim):
 
         #trunk mass
         trunk_mass = self._default_trunk_mass \
-            + torch_rand_float(add_trunk_mass_min, add_trunk_mass_max, (n_envs, 1), self._device)
+            + self.torch_rand_float(add_trunk_mass_min, add_trunk_mass_max, (n_envs, 1), self._device)
         actual_trunk_mass = trunk_mass * self._nf_trunk_mass[env_indices]
         self._write_data("trunk_mass", actual_trunk_mass, env_indices, True)
         actual_trunk_inertia = self._default_trunk_inertia + (actual_trunk_mass / self._default_trunk_mass)
@@ -695,36 +653,35 @@ class HoneyBadgerWalkingA1(IsaacSim):
 
         #trunk com
         actual_trunk_com = self._default_trunk_com \
-            + torch_rand_float(add_com_displacement_min, add_com_displacement_max, (n_envs, 1), self._device)
+            + self.torch_rand_float(add_com_displacement_min, add_com_displacement_max, (n_envs, 1), self._device)
         self.seen_trunk_com[env_indices] = actual_trunk_com.unsqueeze(1)
         actual_trunk_com *= self._nf_trunk_com[env_indices]
         self._write_data("trunk_com", actual_trunk_com.unsqueeze(1), env_indices, True)
 
         #foot scaling
-        self._seen_foot_scaling  = torch_rand_float(foot_scaling_min, foot_scaling_max, (n_envs, 4), self._device)
+        self._seen_foot_scaling  = self.torch_rand_float(foot_scaling_min, foot_scaling_max, (n_envs, 4), self._device)
         actual_foot_scaling = self._seen_foot_scaling * self._nf_foot_size[env_indices]
         for i, name in enumerate(["FL_foot_scale", "FR_foot_scale", "RL_foot_scale", "RR_foot_scale"]):
             self._write_data(name, actual_foot_scaling[env_indices, i].unsqueeze(1).repeat(1, 3), env_indices, True)
         
         #joint nominal position
         self._seen_joint_nominal_pos[env_indices] = self._default_joint_nominal_pos \
-            + torch_rand_float(add_joint_nominal_position_min, add_joint_nominal_position_max, (n_envs, self.NUM_JOINTS), self._device)
+            + self.torch_rand_float(add_joint_nominal_position_min, add_joint_nominal_position_max, (n_envs, self.NUM_JOINTS), self._device)
         #self._write_data("joint_default_pos", self._seen_joint_nominal_pos[env_indices], env_indices)
 
         #joint torque limit
         self._seen_torque_limit[env_indices] = self._default_torque_limit \
-            * (1 + torch_rand_float(-torque_limit_factor, torque_limit_factor, (n_envs, self.NUM_JOINTS), self._device))
+            * (1 + self.torch_rand_float(-torque_limit_factor, torque_limit_factor, (n_envs, self.NUM_JOINTS), self._device))
         self._write_data("torque_limit", self._seen_torque_limit[env_indices], env_indices, True)
 
         #joint max velocity
         self._seen_joint_max_vel[env_indices] = self._default_joint_max_vel \
-            * (1 + torch_rand_float(-joint_velocity_factor, joint_velocity_factor, (n_envs, self.NUM_JOINTS), self._device))
+            * (1 + self.torch_rand_float(-joint_velocity_factor, joint_velocity_factor, (n_envs, self.NUM_JOINTS), self._device))
         self._write_data("max_joint_vel", self._seen_joint_max_vel[env_indices], env_indices, True)
 
-        #joint range
-        #TODO can't do that
-
-        stay_at_default_mask = torch_rand_float(0, 1, (n_envs, ), self._device) < stay_at_default_percentage
+        #joint damping, stiffness, armature, frictionloss
+        stay_at_default_mask = self.torch_rand_float(0, 1, (n_envs, 1), self._device) < stay_at_default_percentage
+        stay_at_default_mask = stay_at_default_mask.squeeze()
         stay_at_default_idx = env_indices[stay_at_default_mask]
         self._seen_joint_damping[stay_at_default_idx] = self._default_joint_damping
         self._seen_joint_stiffness[stay_at_default_idx] = self._default_joint_stiffness
@@ -734,10 +691,10 @@ class HoneyBadgerWalkingA1(IsaacSim):
         not_stay_at_default_mask = torch.logical_not(stay_at_default_mask)
         not_stay_at_default_idx = env_indices[not_stay_at_default_mask]
         num_envs_not_default = not_stay_at_default_idx.shape[0]
-        self._seen_joint_damping[not_stay_at_default_idx] = torch_rand_float(joint_damping_min, joint_damping_max, (num_envs_not_default, self.NUM_JOINTS), self._device)
-        self._seen_joint_stiffness[not_stay_at_default_idx] = torch_rand_float(joint_stiffness_min, joint_stiffness_max, (num_envs_not_default, self.NUM_JOINTS), self._device)
-        self._seen_joint_armature[not_stay_at_default_idx] = torch_rand_float(joint_armature_min, joint_armature_max, (num_envs_not_default, self.NUM_JOINTS), self._device)
-        self._seen_joint_frictionloss[not_stay_at_default_idx] = torch_rand_float(joint_friction_loss_min, joint_friction_loss_max, (num_envs_not_default, self.NUM_JOINTS), self._device)
+        self._seen_joint_damping[not_stay_at_default_idx] = self.torch_rand_float(joint_damping_min, joint_damping_max, (num_envs_not_default, self.NUM_JOINTS), self._device)
+        self._seen_joint_stiffness[not_stay_at_default_idx] = self.torch_rand_float(joint_stiffness_min, joint_stiffness_max, (num_envs_not_default, self.NUM_JOINTS), self._device)
+        self._seen_joint_armature[not_stay_at_default_idx] = self.torch_rand_float(joint_armature_min, joint_armature_max, (num_envs_not_default, self.NUM_JOINTS), self._device)
+        self._seen_joint_frictionloss[not_stay_at_default_idx] = self.torch_rand_float(joint_friction_loss_min, joint_friction_loss_max, (num_envs_not_default, self.NUM_JOINTS), self._device)
 
         self._write_data("joint_damping", self._seen_joint_damping[env_indices] * self._nf_joint_damping[env_indices], env_indices, True) #chceck if damping is difference in scale
         self._write_data("joint_stiffness", self._seen_joint_stiffness[env_indices] * self._nf_joint_stiffness[env_indices], env_indices, True)
@@ -745,9 +702,9 @@ class HoneyBadgerWalkingA1(IsaacSim):
         self._write_data("joint_frictionloss", self._seen_joint_frictionloss[env_indices] * self._nf_joint_friction[env_indices], env_indices, True)
 
         #used for control function
-        self._seen_p_gain[env_indices] = 20 + torch_rand_float(add_p_gain_min, add_p_gain_max, (n_envs, self.NUM_JOINTS), self._device)
-        self._seen_d_gain[env_indices] = 0.5 + torch_rand_float(add_d_gain_min, add_d_gain_max, (n_envs, self.NUM_JOINTS), self._device)
-        self._seen_scaling_factor[env_indices] = 0.25 + torch_rand_float(add_scaling_factor_min, add_scaling_factor_max, (n_envs, self.NUM_JOINTS), self._device)
+        self._seen_p_gain[env_indices] = 20 + self.torch_rand_float(add_p_gain_min, add_p_gain_max, (n_envs, self.NUM_JOINTS), self._device)
+        self._seen_d_gain[env_indices] = 0.5 + self.torch_rand_float(add_d_gain_min, add_d_gain_max, (n_envs, self.NUM_JOINTS), self._device)
+        self._seen_scaling_factor[env_indices] = 0.25 + self.torch_rand_float(add_scaling_factor_min, add_scaling_factor_max, (n_envs, self.NUM_JOINTS), self._device)
 
         self._unseen_p_gain[env_indices] = self._seen_p_gain[env_indices] * self._nf_p_gain[env_indices]
         self._unseen_d_gain[env_indices] = self._seen_d_gain[env_indices] * self._nf_d_gain[env_indices]
@@ -840,22 +797,6 @@ class HoneyBadgerWalkingA1(IsaacSim):
             max_value=torch.inf
         )
 
-        #TODO robot_dimensions, relative_joint_axis, relative_joint_pos_normalized, relative_foot_normalized and mutliple addes multiple times
-
-        self.observation_helper.add_obs(
-            name="foot_size",
-            length=4,
-            min_value=foot_scaling_min - 1.,
-            max_value=foot_scaling_max - 1.
-        )
-
-        self.observation_helper.add_obs(
-            name="trunk_com",
-            length=3,
-            min_value=-torch.inf,
-            max_value=torch.inf
-        )
-
     def _add_seen_parameters(self, obs):
         joint_nominal_pos_ids = self.observation_helper.obs_idx_map["joint_nominal_position"]
         obs[:, joint_nominal_pos_ids] = self._seen_joint_nominal_pos
@@ -889,11 +830,5 @@ class HoneyBadgerWalkingA1(IsaacSim):
         
         mass_ids = self.observation_helper.obs_idx_map["mass"]
         obs[:, mass_ids] = self._seen_summed_mass.unsqueeze(1)
-
-        foot_scale_ids = self.observation_helper.obs_idx_map["foot_size"]
-        obs[:, foot_scale_ids] = self._seen_foot_scaling
-
-        trunk_com_ids = self.observation_helper.obs_idx_map["trunk_com"] #could do problems not normalization
-        obs[:, trunk_com_ids] = self.seen_trunk_com.squeeze(1)
         
         return obs
