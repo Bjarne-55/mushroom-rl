@@ -122,13 +122,13 @@ if __name__ == '__main__':
         n_epochs_policy=5,
         batch_size=int((4096*24) / 32),
         eps_ppo=.2,
-        lam=.95
+        lam=.95,
+        ent_coeff=0.00
     )
     policy_params = dict(
         std_0=1.,
         n_features=[512, 256, 128],
-        use_cuda=True,
-        ent_coeff=0.01
+        use_cuda=True
     )
     num_envs = 4096
     experiment(alg=RudinPPO, num_envs=num_envs, n_epochs=40, n_steps=4096*24*50*3, n_steps_per_fit=4096*24,
