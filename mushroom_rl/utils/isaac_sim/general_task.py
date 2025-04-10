@@ -94,6 +94,7 @@ class GeneralTask(BaseTask):
         self._rp_size = render_product_size
 
         self._consistent_property_storage = {}
+        self._last_teleport_mask = ArrayBackend.get_array_backend(backend).zeros(num_envs, dtype=bool, device=device)
 
         self.collision_helper = CollisionHelper(collision_groups, backend, num_envs, device, n_intermediate_steps)
 
@@ -433,19 +434,29 @@ class GeneralTask(BaseTask):
             element_idx = self._controlled_joints
         self._set_property(self.robots, type, value, element_idx, env_indices)
 
-    def teleport_away(self, env_indices):
+    def teleport_away(self, env_mask):
         """
-        Teleports robots away by setting their Z-coordinate to -10. This speeds up computation 
+        Teleports robots away by setting their Z-coordinate to 50. This speeds up computation 
         when not all environments are used, as fewer collisions need to be processed.
 
         Args:
             env_indices (torch.tensor, np.ndarray, list[int]): The indices of the environments to teleport.
         """
+        env_indices = self._arr_backend.where(env_mask)[0]
+
         pos = self.env_pos[env_indices]
-        pos[:, 2] = -5
+        pos[:, 2] = 50
         self.robots.set_world_poses(positions=pos, indices=env_indices)
         vels = self._arr_backend.zeros(env_indices.shape[0], 6, device=self._device)
         self.robots.set_velocities(vels, indices=env_indices)
+
+        changed_ids = self._arr_backend.nonzero(self._last_teleport_mask != env_mask)
+        if len(self._arr_backend.shape(changed_ids)) > 1:
+            changed_ids = self._arr_backend.squeeze(changed_ids, 1)
+        changed = self._last_teleport_mask[changed_ids] & ~env_mask[changed_ids]
+        self.robots.set_visibilities(changed, indices=changed_ids)
+
+        self._last_teleport_mask = env_mask
 
     def clear_consistent_properties(self, names=None):
         """
