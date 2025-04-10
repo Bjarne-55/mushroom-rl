@@ -133,7 +133,7 @@ class ObservationHelper:
             data given in the dictionary.
         """
         size = self.obs_length
-        obs = ArrayBackend.get_array_backend(self._backend).zeros((self._num_env, size))
+        obs = ArrayBackend.get_array_backend(self._backend).zeros(self._num_env, size)
 
         for name, indices in self.obs_idx_map.items():
             if name in data:
