@@ -6,7 +6,7 @@ import numpy as np
 from pathlib import Path
 
 class CartPole(IsaacSim):
-    def __init__(self, num_envs, backend="torch", device="cuda:0"):
+    def __init__(self, num_envs, headless=True, backend="torch", device="cuda:0", camera_pos=(20, 0, 4), camera_target=(10, 0, 0)):
         usd_path = str(Path(__file__).resolve().parent / "robots_usds/cartpole/cartpole.usd")
         action_spec = ["rail_cart_joint"]
         observation_spec = [
@@ -23,7 +23,8 @@ class CartPole(IsaacSim):
         collision_between_envs = False
         env_spacing = 2.5
         super().__init__(usd_path, action_spec, observation_spec, backend, device, collision_between_envs, num_envs, 
-                         env_spacing, 0.99, 200, additional_data_spec=additional_data_spec)
+                         env_spacing, 0.99, 200, additional_data_spec=additional_data_spec, headless=headless,
+                         camera_position=camera_pos, camera_target=camera_target)
         
         self.backend = ArrayBackend.get_array_backend(backend)
         

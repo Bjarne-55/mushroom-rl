@@ -47,7 +47,7 @@ def experiment(alg, n_epochs, n_steps, n_steps_per_fit, n_episodes_test,
     logger.strong_line()
     logger.info('Experiment Algorithm: ' + alg.__name__)
 
-    mdp = CartPole(64)
+    mdp = CartPole(64, True)
     
     critic_params = dict(network=Network,
                          optimizer={'class': optim.Adam,
