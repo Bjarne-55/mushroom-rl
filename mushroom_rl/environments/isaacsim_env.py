@@ -148,7 +148,7 @@ class IsaacSim(VectorizedEnvironment):
         action = self._preprocess_action(action)
 
         env_indices = arr_backend.where(env_mask)[0]
-        self._task.teleport_away(arr_backend.where(env_mask == False)[0])
+        self._task.teleport_away(env_mask == False)
 
         ctrl_action = None
 
