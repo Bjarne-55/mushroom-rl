@@ -321,7 +321,6 @@ class IsaacSim(VectorizedEnvironment):
     @property
     def render_product_size(self):
         return self._rp_size
-    
 
     def _read_data(self, name, env_indices=None):
         """

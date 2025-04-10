@@ -1,5 +1,4 @@
 from mushroom_rl.core import ArrayBackend
-import torch
 from functools import reduce
 
 class CollisionHelper:
