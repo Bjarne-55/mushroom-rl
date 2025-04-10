@@ -1,5 +1,6 @@
 import numpy as np
 import sys
+import atexit
 
 from mushroom_rl.core import VectorizedEnvironment, MDPInfo, ArrayBackend
 from mushroom_rl.rl_utils.spaces import Box
@@ -77,6 +78,9 @@ class IsaacSim(VectorizedEnvironment):
 
         # Isaac Sim overrides sys.stderr, which breaks tqdm — restore the original
         sys.stderr = sys.__stderr__
+
+        #register exit function for clean closing of simulation_app
+        atexit.register(self.cleanup)
 
         self._backend = backend
         self._device = device
@@ -171,11 +175,11 @@ class IsaacSim(VectorizedEnvironment):
         reward = self.reward(self._obs, action, cur_obs, absorbing)
         extra_info = self._create_info_dictionary(cur_obs)
 
-        self._obs = cur_obs.clone().detach()
+        self._obs = arr_backend.copy(cur_obs)
 
         cur_obs = self._modify_observation(cur_obs)
         
-        return cur_obs.clone().detach(), reward.clone().detach(), arr_backend.logical_and(absorbing, env_mask).clone().detach(), extra_info
+        return arr_backend.copy(cur_obs), arr_backend.copy(reward), arr_backend.copy(arr_backend.logical_and(absorbing, env_mask)), extra_info
     
     def reset_all(self, env_mask, state=None):
         """
@@ -200,14 +204,14 @@ class IsaacSim(VectorizedEnvironment):
         obs = self.observation_helper.build_obs(self._task.get_observations(clone=True))
         obs = self._create_observation(obs)
         if self._obs is None:
-            self._obs = obs.clone().detach()
+            self._obs = arr_backend.copy(obs)
         else:
-            self._obs[env_mask] = obs.clone().detach()[env_mask]
+            self._obs[env_mask] = arr_backend.copy(obs)[env_mask]
 
         info = self._create_info_dictionary(obs)
         obs = self._modify_observation(obs)
 
-        return obs.clone().detach(), info
+        return arr_backend.copy(obs), info
     
     def render_all(self, env_mask, record=False):
         """
@@ -266,7 +270,7 @@ class IsaacSim(VectorizedEnvironment):
         """
         raise NotImplementedError
 
-    def seed(self, seed=-1):
+    def seed(self, seed=-1, torch_deterministic=False):
         """
         Sets the random seed for a deterministic behavior.
 
@@ -278,7 +282,7 @@ class IsaacSim(VectorizedEnvironment):
             int: The seed value that was set.
         """
         from isaacsim.core.utils.torch.maths import set_seed
-        return set_seed(seed)
+        return set_seed(seed, torch_deterministic)
     
     def stop(self, soft=True):
         """
@@ -298,16 +302,17 @@ class IsaacSim(VectorizedEnvironment):
         
         if not soft:
             self._task.clear_consistent_properties()
-        self._world.reset(soft=soft)
+        self._world.reset(soft=True)
 
-    def __del__(self):
+    def cleanup(self):
         """
         Ends simulation.
         """
-        if self._viewer is not None:
+        if hasattr(self, "_viewer") and self._viewer is not None:
             self._viewer.close()
             self._viewer = None
-        self._simulation_app.close()
+        if hasattr(self, "_simulation_app"):
+            self._simulation_app.close()
 
     @property
     def dt(self):
@@ -380,12 +385,21 @@ class IsaacSim(VectorizedEnvironment):
 
         sim_params = {
             'gravity': [0.0, 0.0, -9.81], 
-            'use_gpu_pipeline': True, 
             'use_fabric': True, 
             'enable_scene_query_support': False, 
-            'use_gpu': True,
             'disable_contact_processing': True
         }
+        if self._device is not None and self._device.startswith == "cuda":
+            gpu_params = {
+                'use_gpu_pipeline': True, 
+                'use_gpu': True,
+            }
+        else:
+            gpu_params = {
+                'use_gpu_pipeline': False, 
+                'use_gpu': False,
+            }
+        sim_params.update(gpu_params)
         if custom_sim_params is not None:
             sim_params.update(custom_sim_params)
 
@@ -397,7 +411,8 @@ class IsaacSim(VectorizedEnvironment):
             sim_params=sim_params
         )
         self._physics_context = self._world.get_physics_context()
-        self._physics_context.enable_gpu_dynamics(True)
+        if self._device is not None and self._device.startswith == "cuda":
+            self._physics_context.enable_gpu_dynamics(True)
         self._physics_context.enable_ccd(False)
 
         if timestep is None:

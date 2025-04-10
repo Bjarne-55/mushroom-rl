@@ -113,6 +113,10 @@ class ArrayBackend(object):
         raise NotImplementedError
 
     @staticmethod
+    def rand(*dims, device=None):
+        raise NotImplementedError
+
+    @staticmethod
     def randint(low, high, size):
         raise NotImplementedError
 
@@ -272,7 +276,7 @@ class NumpyBackend(ArrayBackend):
         if x is None:
             return np.where(cond)
         else:
-            np.where(cond, x, y)
+            return np.where(cond, x, y)
 
     @staticmethod
     def squeeze(array, dim=None):
@@ -285,6 +289,10 @@ class NumpyBackend(ArrayBackend):
     @staticmethod
     def size(arr):
         return np.size(arr)
+
+    @staticmethod
+    def rand(*dims, device=None):
+        return np.random.rand(*dims)
 
     @staticmethod
     def randint(low, high, size):
@@ -448,7 +456,7 @@ class TorchBackend(ArrayBackend):
         if x is None:
             return torch.where(cond)
         else:
-            torch.where(cond, x, y)
+            return torch.where(cond, x, y)
 
     @staticmethod
     def squeeze(array, dim=None):
@@ -464,6 +472,11 @@ class TorchBackend(ArrayBackend):
     @staticmethod
     def size(arr):
         return torch.numel(arr)
+    
+    @staticmethod
+    def rand(*dims, device=None):
+        device = TorchUtils.get_device() if device is None else device
+        return torch.rand(dims, device=device)
 
     @staticmethod
     def randint(low, high, size):

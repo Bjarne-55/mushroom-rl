@@ -16,7 +16,6 @@ from pxr import Gf, UsdLux, PhysxSchema
 
 from mushroom_rl.utils.isaac_sim import ObservationType, CollisionHelper, ActionType
 from mushroom_rl.core.array_backend import ArrayBackend
-from mushroom_rl.utils import TorchUtils
 
 
 class GeneralTask(BaseTask):
@@ -73,6 +72,8 @@ class GeneralTask(BaseTask):
                 for the groundplane. The tuple should have the following format: (static_friction, dynamic_friction, restitution)
             render_product_size (tuple): (Width, Height) of the recorded and displayed image.
         """
+        super().__init__("MushroomTask")
+
         self.usd_path = usd_path
         self._physic_context = physic_context
         self._num_envs = num_envs
@@ -95,8 +96,6 @@ class GeneralTask(BaseTask):
         self._consistent_property_storage = {}
 
         self.collision_helper = CollisionHelper(collision_groups, backend, num_envs, device, n_intermediate_steps)
-
-        super().__init__("MushroomTask")
 
     def set_up_scene(self, scene):
         """
@@ -295,7 +294,7 @@ class GeneralTask(BaseTask):
         default_orientations = default_state.orientations[env_indices]
         self.robots.set_world_poses(default_positions, default_orientations, indices=env_indices)
 
-        velocity = self._arr_backend.zeros((len(env_indices), 6))
+        velocity = self._arr_backend.zeros(len(env_indices), 6)
         self.robots.set_velocities(velocity, indices=env_indices)
 
     def get_observation_limits(self):
@@ -313,11 +312,13 @@ class GeneralTask(BaseTask):
             obs_count = self._arr_backend.size(obs[name][0, ...])
 
             if obs_type == ObservationType.JOINT_POS:
-                limits = self.robots.get_dof_limits().to(TorchUtils.get_device())
+                limits = self.robots.get_dof_limits()
+                if self._backend == "torch":
+                    limits = limits.to(self._device)
                 obs_low.append(limits[0, joint_index, 0])
                 obs_high.append(limits[0, joint_index, 1])
             elif obs_type == ObservationType.JOINT_VEL:
-                zero = self._arr_backend.zeros(1)
+                zero = self._arr_backend.zeros(1, dtype=int)
                 limit = self.robots.get_joint_max_velocities(indices=zero, joint_indices=joint_index)[0]
                 obs_low.append(-limit)
                 obs_high.append(limit)
@@ -340,13 +341,13 @@ class GeneralTask(BaseTask):
         """
         if self._action_type == ActionType.EFFORT:
             limit = self.get_joint_max_efforts()
-            return -limit.to(self._device), limit.to(self._device)
+            return -limit, limit
         elif self._action_type == ActionType.POSITION:
             limit = self.get_joint_pos_limits()
-            return limit[0].to(self._device), limit[1].to(self._device)
+            return limit[0], limit[1]
         else:
             limit = self.get_joint_max_velocities()
-            return -limit.to(self._device), limit.to(self._device)
+            return -limit, limit
     
     def get_joint_max_efforts(self):
         """
@@ -355,7 +356,10 @@ class GeneralTask(BaseTask):
         Returns: 
             A tensor or array containing the maximum effort values for each controlled joint.
         """
-        return self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints, clone=True)[0].to(self._device)
+        max_efforts = self.robots.get_max_efforts(indices=[0], joint_indices=self._controlled_joints, clone=True)[0]
+        if self._backend == "torch":
+            max_efforts = max_efforts.to(self._device)
+        return max_efforts
     
     def get_joint_pos_limits(self):
         """
@@ -364,7 +368,10 @@ class GeneralTask(BaseTask):
         Returns: 
             A tensor or array containing the position limits for each controlled joint.
         """
-        return self.robots.get_dof_limits()[0].to(self._device)[self._controlled_joints].T.clone()
+        dof_limits = self.robots.get_dof_limits()[0]
+        if self._backend == "torch":
+            dof_limits = dof_limits.to(self._device)
+        return dof_limits[self._controlled_joints].T.clone()
     
     def get_joint_max_velocities(self):
         """
@@ -564,7 +571,10 @@ class GeneralTask(BaseTask):
         elif obs_type == ObservationType.JOINT_MAX_VELOCITY:
             return view.get_joint_max_velocities(indices=env_indices, joint_indices=element_idx, clone=clone)
         elif obs_type == ObservationType.JOINT_MAX_POS:
-            return view.get_dof_limits().to(self._device)[:, self._controlled_joints]
+            dof_limits = view.get_dof_limits()
+            if self._backend == "torch":
+                dof_limits = dof_limits.to(self._device)
+            return dof_limits[:, self._controlled_joints]
         elif obs_type == ObservationType.JOINT_ARMATURES:
             return view.get_armatures(indices=env_indices, joint_indices=element_idx, clone=clone)
         elif obs_type == ObservationType.JOINT_FRICTION:
