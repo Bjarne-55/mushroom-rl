@@ -3,11 +3,11 @@ from mushroom_rl.utils.isaac_sim import ObservationType
 from mushroom_rl.core import ArrayBackend
 
 import numpy as np
-import torch
+from pathlib import Path
 
 class CartPole(IsaacSim):
     def __init__(self, num_envs, backend="torch", device="cuda:0"):
-        usd_path = "/home/bjarne/GitWorkspace/BachelorThesis/mushroom-rl/isaac_assets/cartpole_slope.usd"
+        usd_path = str(Path(__file__).resolve().parent / "robots_usds/cartpole/cartpole.usd")
         action_spec = ["rail_cart_joint"]
         observation_spec = [
             ("poleJointPos", "", ObservationType.JOINT_POS, "cart_pole_joint"),
