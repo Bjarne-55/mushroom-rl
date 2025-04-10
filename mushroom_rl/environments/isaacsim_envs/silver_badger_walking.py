@@ -4,10 +4,10 @@ from pathlib import Path
 
 from mushroom_rl.environments import IsaacSim
 from mushroom_rl.utils.isaac_sim import ObservationType, ActionType
-from mushroom_rl.environments.isaacsim_envs.honey_walking_a1 import HoneyBadgerWalkingA1
+from mushroom_rl.environments.isaacsim_envs.honey_badger_walking import HoneyBadgerWalking
 from mushroom_rl.rl_utils.spaces import Box
 
-class SilverBadgerWalking(HoneyBadgerWalkingA1):
+class SilverBadgerWalking(HoneyBadgerWalking):
     """
     A learning environment for training the Silver Badger quadroped to walk. 
     Silver Badger is a Robot from MAB Robotics: https://www.mabrobotics.pl/
