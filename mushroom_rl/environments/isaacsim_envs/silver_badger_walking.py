@@ -12,7 +12,7 @@ class SilverBadgerWalking(HoneyBadgerWalking):
     A learning environment for training the Silver Badger quadroped to walk. 
     Silver Badger is a Robot from MAB Robotics: https://www.mabrobotics.pl/
     """
-    def __init__(self, num_envs, horizon, headless, domain_randomization, camera_pos=(105, 0, 4), camera_target=(95, 0, 0)):
+    def __init__(self, num_envs, horizon, headless, domain_randomization=True, camera_pos=(105, 0, 4), camera_target=(95, 0, 0)):
         usd_path = str(Path(__file__).resolve().parent / "robots_usds/silver_badger/silver_badger.usd")
         self.NUM_JOINTS = 13
 
