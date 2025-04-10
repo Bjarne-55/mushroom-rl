@@ -120,7 +120,7 @@ if __name__ == '__main__':
     num_envs = 4096
 
     seed = 1
-    mdp = A1WalkingPos(num_envs, 1000, True, True)
+    mdp = A1Walking(num_envs, 1000, True, True)
     mdp.seed(seed)
     experiment(mdp, alg=RudinPPO, n_epochs=40, n_steps=4096*24*50, n_steps_per_fit=4096*24,
         n_episodes_test=256, alg_params=ppo_params, policy_params=policy_params)
