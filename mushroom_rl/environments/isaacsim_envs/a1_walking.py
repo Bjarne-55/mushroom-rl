@@ -103,10 +103,8 @@ class A1Walking(IsaacSim):
         self._last_joint_vel = torch.zeros((num_envs, self.NUM_JOINTS), device=device)
         self._last_contacts = torch.zeros((num_envs, 4), device=device, dtype=torch.bool)
         self._episode_length = torch.zeros((num_envs, ), dtype=int, device=device)
-
         self._forward_vec = torch.tensor([1., 0., 0.], device=device).repeat((num_envs, 1))
         self._gravity = torch.tensor([0., 0., -1.], device=self._device).repeat((self.number, 1))
-
         self._effort_limit = self._task.get_joint_max_efforts()
     
     def _import_helper_functions(self):
@@ -116,18 +114,40 @@ class A1Walking(IsaacSim):
         self.quat_rotate_inverse = quat_rotate_inverse
         self.torch_rand_float = torch_rand_float
 
-    def _get_values_for_physics_materials(self, num_envs):
-        friction_range = [0.5, 1.25]
-        num_buckets = 64
-        bucket_ids = torch.randint(0, num_buckets, (num_envs, ))
-        friction_buckets = (friction_range[1] - friction_range[0]) * torch.rand((num_buckets, ), device='cpu') + friction_range[0]
-        
-        names = [f"custom_material_{i}" for i in bucket_ids.tolist()]
-        dynamic_friction = [0.5] * num_envs
-        static_friction = friction_buckets[bucket_ids].tolist()
-        restitution = [0.0] * num_envs
-        
-        return list(zip(names, dynamic_friction, static_friction, restitution))
+    def is_absorbing(self, obs):
+        fallen = torch.norm(self._get_net_collision_forces("body", dt=self._timestep)[:, self._trunk_idx, :], dim=-1) > 1.
+        return fallen
+    
+    def setup(self, env_indices, obs):
+        #new
+        self._feet_air_time[env_indices] = 0.
+        self._episode_length[env_indices] = 0
+
+        r_factors = self.torch_rand_float(0.5, 1.5, (len(env_indices), self.NUM_JOINTS), device=self._device)
+        joint_pos = self._default_joint_angles * r_factors
+        joint_vel = torch.zeros((len(env_indices), len(self._action_spec)), device=self._device)
+
+        self._write_data("joint_pos", joint_pos, env_indices)
+        self._write_data("joint_vel", joint_vel, env_indices)
+
+        body_vel = self.torch_rand_float(-0.5, 0.5, (len(env_indices), 6), device=self._device)
+        self._write_data("body_vel", body_vel, env_indices)
+
+        self._setup_joint_pos = joint_pos
+        self._setup_joint_vel = joint_vel
+        self._setup_env_indices = env_indices
+
+        #update last_joint_vel
+        self._last_joint_vel[env_indices] = joint_vel
+
+        self._resample_commands(env_indices)
+
+        zero = torch.zeros(self._n_envs, device=self._device)
+        self._extra_info_rewards = self._extra_info_rewards = {
+            "r_tracking_lin_vel": zero, "r_tracking_ang_vel": zero, "r_lin_vel_z": zero,
+            "r_ang_vel_xy": zero, "r_torques": zero, "r_joint_acc": zero, "r_feet_air_time": zero,
+            "r_collision": zero, "r_action_rate": zero, "r_joint_pos_limits": zero
+        }
     
     def _step_finalize(self, env_indices):
         self._episode_length += 1
@@ -150,14 +170,21 @@ class A1Walking(IsaacSim):
         do_push_ids = do_push_ids[self._episode_length[do_push_ids] > 50]
         if self.domain_randomization:
             self._push_robots(do_push_ids)
+
+    def _resample_commands(self, env_ids):
+        self._commands[env_ids, 0] = self.torch_rand_float(-1., 1., (len(env_ids), 1), device=self._device).squeeze(1)
+        self._commands[env_ids, 1] = self.torch_rand_float(-1., 1., (len(env_ids), 1), device=self._device).squeeze(1)
+        self._commands[env_ids, 3] = self.torch_rand_float(-3.14, 3.14, (len(env_ids), 1), device=self._device).squeeze(1)
+
+        # set small commands to zero
+        self._commands[env_ids, :2] *= (torch.norm(self._commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
     
-    def _push_robots(self, env_indices):
-        max_vel= 1.
-        vels = self.torch_rand_float(-max_vel, max_vel, (env_indices.shape[0], 2), device=self._device)
-        extended_vels = self._read_data("body_vel", env_indices)
-        extended_vels[:, :2] = vels
-        self._write_data("body_vel", extended_vels, env_indices)
-    
+    @staticmethod
+    def wrap_to_pi(angles):
+        angles %= 2*np.pi
+        angles -= 2*np.pi * (angles > np.pi)
+        return angles
+
     def _get_obs_normilization_vec(self):
         v = torch.zeros((self.observation_helper.obs_length), device=self._device)
 
@@ -213,55 +240,28 @@ class A1Walking(IsaacSim):
         soft_joint_pos_limits[:, 1] = middle + 0.5 * r * 0.9
         return soft_joint_pos_limits
 
-    def is_absorbing(self, obs):
-        fallen = torch.norm(self._get_net_collision_forces("body", dt=self._timestep)[:, self._trunk_idx, :], dim=-1) > 1.
-        return fallen
-    
-    def setup(self, env_indices, obs):
-        #new
-        self._feet_air_time[env_indices] = 0.
-        self._episode_length[env_indices] = 0
+    # domain randomization -----------------------------------------------------------------    
+    def _push_robots(self, env_indices):
+        max_vel= 1.
+        vels = self.torch_rand_float(-max_vel, max_vel, (env_indices.shape[0], 2), device=self._device)
+        extended_vels = self._read_data("body_vel", env_indices)
+        extended_vels[:, :2] = vels
+        self._write_data("body_vel", extended_vels, env_indices)
 
-        r_factors = self.torch_rand_float(0.5, 1.5, (len(env_indices), self.NUM_JOINTS), device=self._device)
-        joint_pos = self._default_joint_angles * r_factors
-        joint_vel = torch.zeros((len(env_indices), len(self._action_spec)), device=self._device)
+    def _get_values_for_physics_materials(self, num_envs):
+        friction_range = [0.5, 1.25]
+        num_buckets = 64
+        bucket_ids = torch.randint(0, num_buckets, (num_envs, ))
+        friction_buckets = (friction_range[1] - friction_range[0]) * torch.rand((num_buckets, ), device='cpu') + friction_range[0]
+        
+        names = [f"custom_material_{i}" for i in bucket_ids.tolist()]
+        dynamic_friction = [0.5] * num_envs
+        static_friction = friction_buckets[bucket_ids].tolist()
+        restitution = [0.0] * num_envs
+        
+        return list(zip(names, dynamic_friction, static_friction, restitution))
 
-        self._write_data("joint_pos", joint_pos, env_indices)
-        self._write_data("joint_vel", joint_vel, env_indices)
-
-        body_vel = self.torch_rand_float(-0.5, 0.5, (len(env_indices), 6), device=self._device)
-        self._write_data("body_vel", body_vel, env_indices)
-
-        self._setup_joint_pos = joint_pos
-        self._setup_joint_vel = joint_vel
-        self._setup_env_indices = env_indices
-
-        #update last_joint_vel
-        self._last_joint_vel[env_indices] = joint_vel
-
-        self._resample_commands(env_indices)
-
-        zero = torch.zeros(self._n_envs, device=self._device)
-        self._extra_info_rewards = self._extra_info_rewards = {
-            "r_tracking_lin_vel": zero, "r_tracking_ang_vel": zero, "r_lin_vel_z": zero,
-            "r_ang_vel_xy": zero, "r_torques": zero, "r_joint_acc": zero, "r_feet_air_time": zero,
-            "r_collision": zero, "r_action_rate": zero, "r_joint_pos_limits": zero
-        }
-
-    def _modify_observation(self, obs):
-        joint_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
-        obs[:, joint_pos_indices] -= self._default_joint_angles
-
-        command_indices = self.observation_helper.obs_idx_map["commands"]
-        obs[:, command_indices] = self._commands[:, :3]
-
-        obs *= self._normalization_obs_vec
-        obs += (2 * torch.rand_like(obs) - 1) * self._noise_scale_vec
-
-        obs = torch.clamp(obs, max=100., min=-100.)
-
-        return obs
-    
+    # observations -------------------------------------------------------------------------
     def _create_observation(self, obs):
         #update observation with values set in setup
         if self._setup_env_indices is not None:
@@ -293,21 +293,25 @@ class A1Walking(IsaacSim):
         obs[:, ang_vel_indices] = self.quat_rotate_inverse(rot, ang_vel)
 
         return obs
-    
-    @staticmethod
-    def wrap_to_pi(angles):
-        angles %= 2*np.pi
-        angles -= 2*np.pi * (angles > np.pi)
-        return angles
-    
-    def _resample_commands(self, env_ids):
-        self._commands[env_ids, 0] = self.torch_rand_float(-1., 1., (len(env_ids), 1), device=self._device).squeeze(1)
-        self._commands[env_ids, 1] = self.torch_rand_float(-1., 1., (len(env_ids), 1), device=self._device).squeeze(1)
-        self._commands[env_ids, 3] = self.torch_rand_float(-3.14, 3.14, (len(env_ids), 1), device=self._device).squeeze(1)
 
-        # set small commands to zero
-        self._commands[env_ids, :2] *= (torch.norm(self._commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
+    def _modify_observation(self, obs):
+        joint_pos_indices = self.observation_helper.obs_idx_map["joint_pos"]
+        obs[:, joint_pos_indices] -= self._default_joint_angles
 
+        command_indices = self.observation_helper.obs_idx_map["commands"]
+        obs[:, command_indices] = self._commands[:, :3]
+
+        obs *= self._normalization_obs_vec
+        obs += (2 * torch.rand_like(obs) - 1) * self._noise_scale_vec
+
+        obs = torch.clamp(obs, max=100., min=-100.)
+
+        return obs
+
+    def _create_info_dictionary(self, obs):
+        return self._extra_info_rewards
+    
+    #control ------------------------------------------------------------------------------------------
     def _preprocess_action(self, action):
         action = torch.clip(action, min=-100., max=100.)
         self._actions[:] = action[:]
@@ -319,9 +323,6 @@ class A1Walking(IsaacSim):
         torque = self._compute_torque(action, joint_vels, joint_positions)
         return torque
     
-    def _create_info_dictionary(self, obs):
-        return self._extra_info_rewards
-    
     def _compute_torque(self, action, joint_vels, joint_pos):
         actions_scaled = action * 0.25
         self._torques = 20.0 * (actions_scaled + self._default_joint_angles - joint_pos) - 0.5*joint_vels
@@ -329,8 +330,7 @@ class A1Walking(IsaacSim):
         
         return self._torques
     
-    #Taken from https://proceedings.mlr.press/v164/rudin22a.html
-    #Taken from https://github.com/leggedrobotics/legged_gym/blob/17847702f90d8227cd31cce9c920aa53a739a09a/legged_gym/envs/base/legged_robot.py#L815C3-L816C12
+    # reward function ---------------------------------------------------------------------------------
     def reward(self, obs, action, next_obs, absorbing):
         base_lin_vel = self.observation_helper.get_from_obs(next_obs, "base_lin_vel")
         base_lin_vel_xy = base_lin_vel[:, 0:2]
