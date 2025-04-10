@@ -111,5 +111,5 @@ if __name__ == '__main__':
         use_cuda=True
 
     )
-    experiment(alg=PPO, n_epochs=20, n_steps=30000, n_steps_per_fit=2677,
-                   n_episodes_test=43, alg_params=ppo_params, policy_params=policy_params)
+    experiment(alg=PPO, n_epochs=20, n_steps=30000, n_steps_per_fit=3000,
+                   n_episodes_test=64, alg_params=ppo_params, policy_params=policy_params)
